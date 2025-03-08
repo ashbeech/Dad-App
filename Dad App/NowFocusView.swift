@@ -135,6 +135,8 @@ struct NapControlsView: View {
     
     @State private var elapsedTime: TimeInterval = 0
     @State private var timer: Timer?
+    @State private var displayTime: String = "00:00"
+    @State private var animateTime: Bool = false
     
     var body: some View {
         VStack {
@@ -142,9 +144,14 @@ struct NapControlsView: View {
                 .font(.headline)
                 .padding(.bottom, 5)
             
-            Text(formattedElapsedTime())
+            Text(displayTime)
                 .font(.system(size: 24, weight: .bold, design: .monospaced))
+                .foregroundColor(isPaused ? .orange : .primary)
                 .padding(.bottom, 10)
+                .scaleEffect(animateTime ? 1.05 : 1.0)
+                .animation(animateTime ?
+                          Animation.easeInOut(duration: 0.2).repeatCount(1) :
+                          .default, value: animateTime)
             
             HStack(spacing: 20) {
                 Button(action: onPauseTapped) {
@@ -172,12 +179,34 @@ struct NapControlsView: View {
                 }
             }
         }
+        /*
+        .onAppear {
+            // Calculate initial elapsed time
+            calculateElapsedTime()
+            updateDisplayTime()
+            
+            // Start a timer to update the elapsed time display (every 0.2 seconds for smoother updates)
+            timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+                if !isPaused {
+                    let previousSeconds = Int(elapsedTime) % 60
+                    calculateElapsedTime()
+                    let currentSeconds = Int(elapsedTime) % 60
+                    
+                    // Animate when seconds change
+                    if previousSeconds != currentSeconds {
+                        animateTimeChange()
+                    }
+                    
+                    updateDisplayTime()
+                }
+            }
+        }*/
         .onAppear {
             // Calculate initial elapsed time
             calculateElapsedTime()
             
-            // Start a timer to update the elapsed time display (every 0.5 seconds)
-            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            // Start a more frequent timer to update the elapsed time display (every 0.2 seconds for smoother updates)
+            timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
                 if !isPaused {
                     calculateElapsedTime()
                 }
@@ -205,6 +234,23 @@ struct NapControlsView: View {
         
         // Calculate elapsed time (now - startTime - totalPauseTime)
         elapsedTime = now.timeIntervalSince(sleepEvent.date) - totalPauseTime
+    }
+    
+    private func updateDisplayTime() {
+        displayTime = formattedElapsedTime()
+    }
+    
+    private func animateTimeChange() {
+        withAnimation {
+            animateTime = true
+        }
+        
+        // Reset animation after a delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            withAnimation {
+                animateTime = false
+            }
+        }
     }
     
     private func formattedElapsedTime() -> String {

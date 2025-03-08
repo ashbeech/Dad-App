@@ -63,7 +63,8 @@ struct EditSleepView: View {
             Section(header: Text("Timing")) {
                 DatePicker("Start Time", selection: $startTime, displayedComponents: .hourAndMinute)
                 
-                if sleepEvent.sleepType == .bedtime || sleepEvent.sleepType == .nap {
+                // Only show end time for nap events (not waketime or bedtime)
+                if sleepEvent.sleepType == .nap {
                     DatePicker("End Time", selection: $endTime, displayedComponents: .hourAndMinute)
                         .onChange(of: startTime) { _, newValue in
                             // Ensure end time is always after start time
@@ -169,11 +170,13 @@ struct EditSleepView: View {
     
     private func saveEvent() {
         // For wake time, end time is not really relevant
-        let actualEndTime = sleepEvent.sleepType == .waketime ? startTime.addingTimeInterval(30 * 60) : endTime
-        
-        // For bedtime, ensure the end time is the next day's wake time
         let finalEndTime: Date
-        if sleepEvent.sleepType == .bedtime {
+        
+        if sleepEvent.sleepType == .waketime {
+            finalEndTime = startTime.addingTimeInterval(30 * 60)
+        }
+        else if sleepEvent.sleepType == .bedtime {
+            // For bedtime, ensure the end time is the next day's wake time
             let calendar = Calendar.current
             var nextDay = calendar.dateComponents([.year, .month, .day], from: date)
             nextDay.day = (nextDay.day ?? 0) + 1
@@ -185,15 +188,16 @@ struct EditSleepView: View {
             nextWakeComponents.hour = wakeComponents.hour
             nextWakeComponents.minute = wakeComponents.minute
             
-            finalEndTime = calendar.date(from: nextWakeComponents) ?? actualEndTime
-        } else {
-            finalEndTime = actualEndTime
+            finalEndTime = calendar.date(from: nextWakeComponents) ?? startTime.addingTimeInterval(10 * 3600)
+        }
+        else {
+            finalEndTime = endTime
         }
         
         let updatedEvent = SleepEvent(
             id: sleepEvent.id,
             date: startTime,
-            sleepType: sleepEvent.sleepType, // Keep the original sleep type for wake/bedtime
+            sleepType: sleepEvent.sleepType,
             endTime: finalEndTime,
             notes: notes,
             isTemplate: sleepEvent.isTemplate,

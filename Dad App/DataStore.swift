@@ -424,7 +424,7 @@ class DataStore: ObservableObject {
         var dailySleepEvents: [SleepEvent] = []
         
         // Check if we already have wake and bedtime events
-        let existingEvents = events[dateString] ?? []
+        _ = events[dateString] ?? []
         let existingSleepEvents = sleepEvents[dateString] ?? []
         
         // Filter for existing wake and bedtime events
