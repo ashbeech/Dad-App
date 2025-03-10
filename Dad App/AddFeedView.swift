@@ -12,6 +12,7 @@ struct AddFeedView: View {
     @Environment(\.presentationMode) var presentationMode
     
     let date: Date
+    let initialTime: Date
     
     @State private var amount: Double = 180
     @State private var breastMilkPercentage: Double = 0
@@ -24,23 +25,26 @@ struct AddFeedView: View {
     @State private var offset: CGFloat = 0
     @State private var buttonScale: CGFloat = 1.0
     
-    init(date: Date) {
+    init(date: Date, initialTime: Date = Date()) {
         self.date = date
+        self.initialTime = initialTime
         
-        // Initialize with the passed date
+        // Initialize with the provided initialTime instead of just the date
         let calendar = Calendar.current
-        let hour = calendar.component(.hour, from: date)
-        let minute = calendar.component(.minute, from: date)
         
-        var components = calendar.dateComponents([.year, .month, .day], from: date)
-        components.hour = hour
-        components.minute = minute
+        // Extract year, month, day from date and hour, minute from initialTime
+        var dateComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        let timeComponents = calendar.dateComponents([.hour, .minute], from: initialTime)
         
-        let initialDate = calendar.date(from: components) ?? date
-        _feedTime = State(initialValue: initialDate)
+        // Combine them
+        dateComponents.hour = timeComponents.hour
+        dateComponents.minute = timeComponents.minute
+        
+        let combinedDate = calendar.date(from: dateComponents) ?? initialTime
+        _feedTime = State(initialValue: combinedDate)
         
         // Default prep time is 1 hour before feed time
-        _prepTime = State(initialValue: initialDate.addingTimeInterval(-3600))
+        _prepTime = State(initialValue: combinedDate.addingTimeInterval(-3600))
     }
     
     var body: some View {

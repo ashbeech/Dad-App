@@ -80,9 +80,10 @@ struct EventRow: View {
     let event: Event
     
     // Add these state variables
-    @State private var elapsedTime: TimeInterval = 0
-    @State private var timer: Timer?
     @State private var currentFormattedDuration: String = ""
+    @State private var timerID: UUID = UUID()
+    @State private var localTimer: Timer? = nil
+    @State private var isPaused: Bool = false
     
     var body: some View {
         HStack {
@@ -129,17 +130,65 @@ struct EventRow: View {
                     
                     Text("Duration: \(currentFormattedDuration)")
                         .font(.caption)
-                        .foregroundColor(.purple)
+                        .foregroundColor(sleepEvent.isPaused ? .orange : .purple)
                         .fontWeight(.medium)
                         .onAppear {
-                            // Start a timer to update the duration display
-                            setupTimerForLiveUpdates(sleepEvent: sleepEvent)
+                            // Initialize state when view appears
+                            isPaused = sleepEvent.isPaused
+                            updateCurrentDuration(sleepEvent: sleepEvent)
+                            
+                            // Start a timer if not paused
+                            if !isPaused {
+                                startTimer(sleepEvent: sleepEvent)
+                            }
+                            
+                            // Listen for pause state changes
+                            NotificationCenter.default.addObserver(
+                                forName: NSNotification.Name("NapPauseStateChanged"),
+                                object: nil,
+                                queue: .main
+                            ) { notification in
+                                if let eventId = notification.object as? UUID,
+                                   eventId == event.id,
+                                   let updatedSleepEvent = dataStore.getSleepEvent(id: event.id, for: date) {
+                                    // Update our local state
+                                    isPaused = updatedSleepEvent.isPaused
+                                    print("EventRow received pause change: isPaused=\(isPaused)")
+                                    
+                                    // Manage timer based on new state
+                                    if isPaused {
+                                        stopTimer()
+                                    } else {
+                                        startTimer(sleepEvent: updatedSleepEvent)
+                                    }
+                                    
+                                    // Update duration immediately
+                                    updateCurrentDuration(sleepEvent: updatedSleepEvent)
+                                }
+                            }
+                            
+                            // Listen for nap stop events
+                            NotificationCenter.default.addObserver(
+                                forName: NSNotification.Name("NapStopped"),
+                                object: nil,
+                                queue: .main
+                            ) { notification in
+                                if let eventId = notification.object as? UUID,
+                                   eventId == event.id {
+                                    // Stop our timer
+                                    stopTimer()
+                                    
+                                    // Force a refresh
+                                    timerID = UUID()
+                                }
+                            }
                         }
                         .onDisappear {
-                            // Clean up timer when view disappears
-                            timer?.invalidate()
-                            timer = nil
+                            // Clean up timer and observer when view disappears
+                            stopTimer()
+                            NotificationCenter.default.removeObserver(self)
                         }
+                        .id(timerID) // Force refresh when timer ID changes
                 }
                 
                 if !event.notes.isEmpty {
@@ -157,21 +206,57 @@ struct EventRow: View {
         .padding(.vertical, 4)
     }
     
-    // Add this method to set up the timer for live updates
-    private func setupTimerForLiveUpdates(sleepEvent: SleepEvent) {
-        // Calculate initial duration
-        updateCurrentDuration(sleepEvent: sleepEvent)
+    private func startTimer(sleepEvent: SleepEvent) {
+        // Stop any existing timer
+        stopTimer()
         
-        // Set up timer for real-time updates (every 0.5 seconds)
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+        print("Starting event row timer")
+        localTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             updateCurrentDuration(sleepEvent: sleepEvent)
         }
     }
     
-    // Add this method to update the current duration
+    private func stopTimer() {
+        if localTimer != nil {
+            print("Stopping event row timer")
+            localTimer?.invalidate()
+            localTimer = nil
+        }
+    }
+    
     private func updateCurrentDuration(sleepEvent: SleepEvent) {
-        let duration = SleepUtilities.calculateEffectiveDuration(sleepEvent: sleepEvent)
-        currentFormattedDuration = SleepUtilities.formatDuration(duration)
+        let elapsedTime = calculateEffectiveDuration(sleepEvent: sleepEvent)
+        currentFormattedDuration = formatDuration(elapsedTime)
+    }
+    
+    private func calculateEffectiveDuration(sleepEvent: SleepEvent) -> TimeInterval {
+        let now = Date()
+        var totalPauseTime: TimeInterval = 0
+        
+        // Calculate total pause time from completed intervals
+        for interval in sleepEvent.pauseIntervals {
+            totalPauseTime += interval.resumeTime.timeIntervalSince(interval.pauseTime)
+        }
+        
+        // If currently paused, add the current pause interval
+        if sleepEvent.isPaused, let pauseTime = sleepEvent.lastPauseTime {
+            totalPauseTime += now.timeIntervalSince(pauseTime)
+        }
+        
+        // Calculate total elapsed time
+        return now.timeIntervalSince(sleepEvent.date) - totalPauseTime
+    }
+    
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let hours = Int(duration) / 3600
+        let minutes = (Int(duration) % 3600) / 60
+        let seconds = Int(duration) % 60
+        
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            return String(format: "%02d:%02d", minutes, seconds)
+        }
     }
     
     private func eventTitle() -> String {
@@ -195,7 +280,7 @@ struct EventRow: View {
                 }
             }
             return "Sleep"
-        case .task: return "Todo"
+        case .task: return "Task"
         }
     }
     
@@ -215,8 +300,13 @@ struct EventRow: View {
                let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date) {
                 switch sleepEvent.sleepType {
                 case .nap:
-                    return Image(systemName: "moon.zzz.fill")
-                        .foregroundColor(.purple)
+                    if sleepEvent.isOngoing && sleepEvent.isPaused {
+                        return Image(systemName: "moon.fill")
+                            .foregroundColor(.orange)
+                    } else {
+                        return Image(systemName: "moon.zzz.fill")
+                            .foregroundColor(.purple)
+                    }
                 case .bedtime:
                     return Image(systemName: "bed.double.fill")
                         .foregroundColor(.indigo)
@@ -228,8 +318,8 @@ struct EventRow: View {
             return Image(systemName: "moon.zzz.fill")
                 .foregroundColor(.green)
         case .task:
-            return Image(systemName: "task.fill")
-                .foregroundColor(.purple)
+            return Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
         }
     }
 }

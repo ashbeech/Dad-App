@@ -132,7 +132,8 @@ struct EditSleepView: View {
                 // Only allow regular sleep events to be deleted, not wake or bedtime
                 if sleepEvent.sleepType != .waketime && sleepEvent.sleepType != .bedtime {
                     Button(action: {
-                        showDeleteConfirmation = true
+                        deleteEvent()
+                        //showDeleteConfirmation = true
                     }) {
                         Text("Delete")
                             .frame(maxWidth: .infinity)
@@ -146,16 +147,17 @@ struct EditSleepView: View {
             }
             .padding()
         }
+        /*
         .alert(isPresented: $showDeleteConfirmation) {
             Alert(
                 title: Text("Delete Event"),
-                message: Text("Are you sure you want to delete this sleep event?"),
+                //message: Text("Are you sure you want to delete this sleep event?"),
                 primaryButton: .destructive(Text("Delete")) {
                     deleteEvent()
                 },
                 secondaryButton: .cancel()
             )
-        }
+        }*/
         .alert(isPresented: $showSaveAsPermanentAlert) {
             Alert(
                 title: Text("Save Default Time"),
@@ -212,6 +214,9 @@ struct EditSleepView: View {
     }
     
     private func deleteEvent() {
+        // Log deletion attempt
+        print("Attempting to delete sleep event: \(sleepEvent.id)")
+        
         // Cancel any associated notifications
         NotificationManager.shared.cancelNotification(for: sleepEvent.id)
         
@@ -251,6 +256,12 @@ struct EditSleepView: View {
         }
         
         dataStore.baby = updatedBaby
+        
+        // Post notification with async delay to ensure UI updates AFTER dataStore changes propagate
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NotificationCenter.default.post(name: NSNotification.Name("BabyTimeChanged"), object: nil)
+        }
+        
         saveEvent() // Also save the current instance
     }
 }

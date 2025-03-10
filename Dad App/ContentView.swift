@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var showingSettingsSheet = false
     @State private var filteredEventTypes: [EventType]? = nil
     @State private var showingNapActionSheet = false
+    @State private var initialEventTime: Date = Date()
     
     var body: some View {
         VStack(spacing: 0) {
@@ -39,10 +40,21 @@ struct ContentView: View {
             
             // Donut chart
             let events = filteredEvents(from: dataStore.getEvents(for: currentDate))
-            DonutChartView(date: currentDate, events: events, selectedEvent: $selectedEvent, filteredEventTypes: $filteredEventTypes)
-                .frame(height: UIScreen.main.bounds.height * 0.38)
-                .padding(.horizontal)
-                .environmentObject(dataStore)
+            DonutChartView(
+                date: currentDate,
+                events: events,
+                selectedEvent: $selectedEvent,
+                filteredEventTypes: $filteredEventTypes,
+                onAddEventTapped: { tappedTime in
+                    // Store the tapped time
+                    initialEventTime = tappedTime
+                    // Show the add sheet
+                    showingAddSheet = true
+                }
+            )
+            .frame(height: UIScreen.main.bounds.height * 0.38)
+            .padding(.horizontal)
+            .environmentObject(dataStore)
             
             // Category bar
             CategoryBarView(selectedCategories: $filteredEventTypes)
@@ -72,7 +84,7 @@ struct ContentView: View {
             .padding(.bottom, 8)
         }
         .sheet(isPresented: $showingAddSheet) {
-            AddEventView(date: currentDate)
+            AddEventView(date: currentDate, initialTime: initialEventTime)
                 .environmentObject(dataStore)
         }
         .sheet(item: $selectedEvent) { event in
@@ -114,24 +126,64 @@ struct ContentView: View {
     }
     
     internal func filteredEvents(from events: [Event]) -> [Event] {
-        if let types = filteredEventTypes {
-            // Filter regular events according to the selected types
-            let filteredRegularEvents = events.filter { types.contains($0.type) }
-            
-            // Always include wake and bedtime events regardless of filter
-            let wakeAndBedtimeEvents = events.filter { event in
+        // If no filter, return all events
+        if filteredEventTypes == nil {
+            return events
+        }
+        
+        guard let types = filteredEventTypes else {
+            return events
+        }
+        
+        // Create a helper function to check if an event should be shown
+        func shouldIncludeEvent(_ event: Event) -> Bool {
+            // First check if the event type matches the filter
+            if types.contains(event.type) {
+                // For sleep events, apply additional filtering
                 if event.type == .sleep,
                    let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
                    let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date) {
-                    return sleepEvent.sleepType == .waketime || sleepEvent.sleepType == .bedtime
+                    
+                    // Special case: Wake and bedtime events only shown when filter is "All" or specifically "Sleep"
+                    if sleepEvent.sleepType == .waketime || sleepEvent.sleepType == .bedtime {
+                        // Only include wake/bedtime when Sleep filter is active or All (no filter)
+                        return true
+                    }
+                    
+                    // When sleep filter is active, include naps
+                    return sleepEvent.sleepType == .nap
                 }
-                return false
+                return true
             }
             
-            // Combine and return all events
-            return filteredRegularEvents + wakeAndBedtimeEvents
+            // Special case: Only include wake and bedtime events when "All" or "Sleep" filters are active
+            if event.type == .sleep,
+               let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
+               let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date),
+               (sleepEvent.sleepType == .waketime || sleepEvent.sleepType == .bedtime) {
+                
+                // Only include wake/bedtime events when "All" or "Sleep" filters are active
+                return types.isEmpty || types.contains(.sleep)
+            }
+            
+            return false
         }
-        return events
+        
+        // Apply our filtering function to the events
+        let filteredEvents = events.filter(shouldIncludeEvent)
+        
+        // Return filtered events with duplicates removed
+        var uniqueEvents: [Event] = []
+        var seenIDs: Set<UUID> = []
+        
+        for event in filteredEvents {
+            if !seenIDs.contains(event.id) {
+                uniqueEvents.append(event)
+                seenIDs.insert(event.id)
+            }
+        }
+        
+        return uniqueEvents
     }
 }
 

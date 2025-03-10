@@ -14,6 +14,12 @@ struct AddEventView: View {
     @State private var offset: CGFloat = 0
     
     let date: Date
+    let initialTime: Date
+    
+    init(date: Date, initialTime: Date = Date()) {
+        self.date = date
+        self.initialTime = initialTime
+    }
     
     var body: some View {
         ZStack {
@@ -41,14 +47,18 @@ struct AddEventView: View {
                 Picker("Event Type", selection: $eventType) {
                     Text("Feed").tag(EventType.feed)
                     Text("Sleep").tag(EventType.sleep)
+                    Text("Task").tag(EventType.task)
                 }
                 .pickerStyle(SegmentedPickerStyle())
                 .padding(.horizontal)
                 
+                // Pass the initialTime to child views
                 if eventType == .feed {
-                    AddFeedView(date: date)
+                    AddFeedView(date: date, initialTime: initialTime)
+                } else if eventType == .sleep {
+                    AddSleepView(date: date, initialTime: initialTime)
                 } else {
-                    AddSleepView(date: date)
+                    AddTaskView(date: date, initialTime: initialTime)
                 }
                 
                 Spacer()

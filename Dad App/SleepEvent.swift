@@ -18,8 +18,9 @@ struct SleepEvent: Identifiable, Codable {
     var isPaused: Bool
     var pauseIntervals: [PauseInterval]
     var lastPauseTime: Date?
+    var actualSleepDuration: TimeInterval? // New field for tracking actual sleep time
     
-    init(id: UUID = UUID(), date: Date, sleepType: SleepType, endTime: Date, notes: String = "", isTemplate: Bool = false, isOngoing: Bool = false, isPaused: Bool = false, pauseIntervals: [PauseInterval] = [], lastPauseTime: Date? = nil) {
+    init(id: UUID = UUID(), date: Date, sleepType: SleepType, endTime: Date, notes: String = "", isTemplate: Bool = false, isOngoing: Bool = false, isPaused: Bool = false, pauseIntervals: [PauseInterval] = [], lastPauseTime: Date? = nil, actualSleepDuration: TimeInterval? = nil) {
         self.id = id
         self.date = date
         self.notes = notes
@@ -30,6 +31,7 @@ struct SleepEvent: Identifiable, Codable {
         self.isPaused = isPaused
         self.pauseIntervals = pauseIntervals
         self.lastPauseTime = lastPauseTime
+        self.actualSleepDuration = actualSleepDuration
     }
     
     func toEvent() -> Event {

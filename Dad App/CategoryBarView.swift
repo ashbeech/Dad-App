@@ -9,9 +9,7 @@ import SwiftUI
 
 struct CategoryBarView: View {
     @Binding var selectedCategories: [EventType]?
-    @State private var scrollOffset: CGFloat = 0
-    @State private var isShowingMore = false
-
+    
     // All possible categories (expandable for future)
     private let categories: [(title: String, type: [EventType]?)] = [
         ("All", nil),
@@ -21,31 +19,33 @@ struct CategoryBarView: View {
     ]
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(0..<categories.count, id: \.self) { index in
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            selectedCategories = categories[index].type
-                        }
-                    }) {
-                        Text(categories[index].title)
-                            .font(.callout)
-                            .fontWeight(isSelected(categories[index].type) ? .bold : .regular)
-                            .foregroundColor(isSelected(categories[index].type) ? .white : .primary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(isSelected(categories[index].type) ? Color.blue : Color.gray.opacity(0.2))
-                            )
-                            // Removed the Circle() indicator that was below the text
+        HStack(spacing: 0) {
+            ForEach(0..<categories.count, id: \.self) { index in
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedCategories = categories[index].type
                     }
-                    .buttonStyle(PlainButtonStyle())
+                }) {
+                    Text(categories[index].title)
+                        .font(.callout)
+                        .fontWeight(isSelected(categories[index].type) ? .bold : .regular)
+                        .foregroundColor(isSelected(categories[index].type) ? .blue : .gray)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            isSelected(categories[index].type)
+                            ? Color.blue.opacity(0.1)
+                            : Color.gray.opacity(0.05)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                // Add divider between categories (except after the last one)
+                if index < categories.count - 1 {
+                    Divider()
+                        .frame(height: 24)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
         }
         .background(Color(.secondarySystemBackground))
         .cornerRadius(10)

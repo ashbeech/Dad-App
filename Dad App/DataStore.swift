@@ -14,11 +14,16 @@ class DataStore: ObservableObject {
     private let eventsKey = "events"
     private let feedEventsKey = "feedEvents"
     private let sleepEventsKey = "sleepEvents"
+    private let taskEventsKey = "taskEvents"
+    
+    private var deletedEventsCache: [UUID: DeletedEventState] = [:]
+    private var deletionTimers: [UUID: Timer] = [:]
     
     @Published var baby: Baby
     @Published var events: [String: [Event]] = [:] // [DateString: [Event]]
     @Published var feedEvents: [String: [FeedEvent]] = [:] // [DateString: [FeedEvent]]
     @Published var sleepEvents: [String: [SleepEvent]] = [:] // [DateString: [SleepEvent]]
+    @Published var taskEvents: [String: [TaskEvent]] = [:]
     
     // For undo/redo functionality
     var lastEventStates: [EventState] = [] // Stack of states for undo
@@ -54,6 +59,11 @@ class DataStore: ObservableObject {
             self.sleepEvents = sleepEvents
         }
         
+        if let data = UserDefaults.standard.data(forKey: taskEventsKey),
+           let taskEvents = try? JSONDecoder().decode([String: [TaskEvent]].self, from: data) {
+            self.taskEvents = taskEvents
+        }
+        
         // Save when data changes
         $baby
             .sink { [weak self] baby in
@@ -86,6 +96,14 @@ class DataStore: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+        
+        $taskEvents
+            .sink { [weak self] taskEvents in
+                if let encoded = try? JSONEncoder().encode(taskEvents) {
+                    UserDefaults.standard.set(encoded, forKey: self?.taskEventsKey ?? "")
+                }
+            }
+            .store(in: &cancellables)
     }
     
     func addFeedEvent(_ event: FeedEvent, for date: Date) {
@@ -103,7 +121,11 @@ class DataStore: ObservableObject {
         
         // Schedule notification for the event
         NotificationManager.shared.scheduleFeedNotification(for: event)
+        
+        // Add this line to post a notification about the new event
+        NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
     }
+
     
     func addSleepEvent(_ event: SleepEvent, for date: Date) {
         let dateString = formatDate(date)
@@ -120,6 +142,26 @@ class DataStore: ObservableObject {
         
         // Schedule notification for the event
         NotificationManager.shared.scheduleSleepNotification(for: event)
+        
+        // Add this line to post a notification about the new event
+        NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
+    }
+    
+    func addTaskEvent(_ event: TaskEvent, for date: Date) {
+        let dateString = formatDate(date)
+        
+        // Add to general events
+        var currentEvents = events[dateString] ?? []
+        currentEvents.append(event.toEvent())
+        events[dateString] = currentEvents
+        
+        // Add to task events
+        var currentTaskEvents = taskEvents[dateString] ?? []
+        currentTaskEvents.append(event)
+        taskEvents[dateString] = currentTaskEvents
+        
+        // Post notification about the new event
+        NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
     }
     
     func getEvents(for date: Date) -> [Event] {
@@ -140,6 +182,11 @@ class DataStore: ObservableObject {
     func getOngoingSleepEvents(for date: Date) -> [SleepEvent] {
         let dateString = formatDate(date)
         return sleepEvents[dateString]?.filter({ $0.isOngoing }) ?? []
+    }
+    
+    func getTaskEvent(id: UUID, for date: Date) -> TaskEvent? {
+        let dateString = formatDate(date)
+        return taskEvents[dateString]?.first(where: { $0.id == id })
     }
     
     func startNapNow(for date: Date) -> SleepEvent {
@@ -192,6 +239,133 @@ class DataStore: ObservableObject {
         updateSleepEvent(updatedEvent, for: date)
     }
     
+    // Helper method to find the wake event for a given date
+    func findWakeEvent(for date: Date) -> SleepEvent? {
+        let dateString = formatDate(date)
+        let sleepEvents = self.sleepEvents[dateString] ?? []
+        return sleepEvents.first(where: { $0.sleepType == .waketime })
+    }
+
+    // Helper method to find the bedtime event for a given date
+    func findBedtimeEvent(for date: Date) -> SleepEvent? {
+        let dateString = formatDate(date)
+        let sleepEvents = self.sleepEvents[dateString] ?? []
+        return sleepEvents.first(where: { $0.sleepType == .bedtime })
+    }
+
+    // Method to check if a nap should be automatically stopped due to bedtime
+    func checkAndStopNapsAtBedtime() {
+        let today = Date()
+        let dateString = formatDate(today)
+        let ongoingNaps = getOngoingSleepEvents(for: today).filter { $0.sleepType == .nap }
+        
+        if !ongoingNaps.isEmpty {
+            // Get bedtime for today
+            let bedtimeEvent = findBedtimeEvent(for: today)
+            let bedTime = bedtimeEvent?.date ?? baby.bedTime
+            
+            // Check if current time is at or past bedtime
+            let now = Date()
+            let calendar = Calendar.current
+            
+            // Convert to minutes since midnight for both times
+            let nowComponents = calendar.dateComponents([.hour, .minute], from: now)
+            let bedComponents = calendar.dateComponents([.hour, .minute], from: bedTime)
+            
+            let nowMinutes = (nowComponents.hour ?? 0) * 60 + (nowComponents.minute ?? 0)
+            let bedMinutes = (bedComponents.hour ?? 0) * 60 + (bedComponents.minute ?? 0)
+            
+            // Check if current time is at or past bedtime
+            if nowMinutes >= bedMinutes {
+                // It's bedtime or later, stop all ongoing naps
+                for nap in ongoingNaps {
+                    stopOngoingNap(nap, for: today)
+                    
+                    // Post notification for UI update
+                    NotificationCenter.default.post(name: NSNotification.Name("NapStoppedDueToBedtime"), object: nap.id)
+                }
+                
+                print("Auto-stopped \(ongoingNaps.count) ongoing naps due to bedtime")
+            }
+        }
+    }
+
+    // Method to validate event times to ensure they're within wake and bedtime
+    func validateEventTimes(startTime: Date, endTime: Date, for date: Date) -> (Date, Date) {
+        let calendar = Calendar.current
+        
+        // Get wake and bedtime for constraints
+        let wakeEvent = findWakeEvent(for: date)
+        let bedtimeEvent = findBedtimeEvent(for: date)
+        
+        let wakeTime = wakeEvent?.date ?? baby.wakeTime
+        let bedTime = bedtimeEvent?.date ?? baby.bedTime
+        
+        // Extract components for comparison
+        let startComponents = calendar.dateComponents([.hour, .minute], from: startTime)
+        let endComponents = calendar.dateComponents([.hour, .minute], from: endTime)
+        let wakeComponents = calendar.dateComponents([.hour, .minute], from: wakeTime)
+        let bedComponents = calendar.dateComponents([.hour, .minute], from: bedTime)
+        
+        // Convert to minutes since midnight
+        let startMinutes = (startComponents.hour ?? 0) * 60 + (startComponents.minute ?? 0)
+        let endMinutes = (endComponents.hour ?? 0) * 60 + (endComponents.minute ?? 0)
+        let wakeMinutes = (wakeComponents.hour ?? 0) * 60 + (wakeComponents.minute ?? 0)
+        let bedMinutes = (bedComponents.hour ?? 0) * 60 + (bedComponents.minute ?? 0)
+        
+        // Check if bedtime is after midnight
+        let isBedtimeAfterMidnight = bedMinutes < wakeMinutes
+        
+        // Initialize validated times with input times
+        var validStartMinutes = startMinutes
+        var validEndMinutes = endMinutes
+        
+        // Validate start time to be after wake time and before bedtime
+        if startMinutes < wakeMinutes {
+            validStartMinutes = wakeMinutes
+        } else if !isBedtimeAfterMidnight && startMinutes > bedMinutes {
+            validStartMinutes = bedMinutes
+        }
+        
+        // Validate end time to be after start time and before bedtime
+        if validEndMinutes < validStartMinutes {
+            // End time must be after start time
+            validEndMinutes = validStartMinutes + 15 // Minimum 15 minutes
+        }
+        
+        if !isBedtimeAfterMidnight && validEndMinutes > bedMinutes {
+            // End time must be before bedtime (unless bedtime is after midnight)
+            validEndMinutes = bedMinutes
+        }
+        
+        // Create new dates with validated times
+        var validStartComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        validStartComponents.hour = validStartMinutes / 60
+        validStartComponents.minute = validStartMinutes % 60
+        
+        var validEndComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        validEndComponents.hour = validEndMinutes / 60
+        validEndComponents.minute = validEndMinutes % 60
+        
+        // Handle the case where endTime wraps to next day
+        if isBedtimeAfterMidnight && validEndMinutes < validStartMinutes {
+            validEndComponents.day = (validEndComponents.day ?? 0) + 1
+        }
+        
+        let validStartTime = calendar.date(from: validStartComponents) ?? startTime
+        let validEndTime = calendar.date(from: validEndComponents) ?? endTime
+        
+        return (validStartTime, validEndTime)
+    }
+
+    // Timer to periodically check for naps that should be stopped at bedtime
+    func setupBedtimeNapCheckTimer() {
+        // Check every minute if it's bedtime and if we need to stop any ongoing naps
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.checkAndStopNapsAtBedtime()
+        }
+    }
+    
     func togglePauseOngoingNap(_ sleepEvent: SleepEvent, for date: Date) {
         var updatedEvent = sleepEvent
         
@@ -232,54 +406,140 @@ class DataStore: ObservableObject {
         let dateComponents = calendar.dateComponents([.year, .month, .day], from: lastState.oldStartTime)
         let date = calendar.date(from: dateComponents) ?? Date()
         
-        // Save current state for redo before modifying
-        saveCurrentStateForRedo(eventId: lastState.eventId, for: date)
+        // Save current state for redo before modifying (only needed for non-deletions)
+        if !lastState.isDeletion {
+            saveCurrentStateForRedo(eventId: lastState.eventId, for: date)
+        }
         
-        switch lastState.eventType {
-        case .feed:
-            if let feedEvent = getFeedEvent(id: lastState.eventId, for: date) {
-                // Create a new feed event with the old times
-                let restoredEvent = FeedEvent(
-                    id: feedEvent.id,
-                    date: lastState.oldStartTime,
-                    amount: feedEvent.amount,
-                    breastMilkPercentage: feedEvent.breastMilkPercentage,
-                    formulaPercentage: feedEvent.formulaPercentage,
-                    preparationTime: lastState.oldPrepTime ?? feedEvent.preparationTime,
-                    notes: feedEvent.notes,
-                    isTemplate: feedEvent.isTemplate
-                )
+        // Check if this was a deletion
+        if lastState.isDeletion {
+            // Restore deleted event from cache
+            if let deletedState = deletedEventsCache[lastState.eventId] {
+                // Restore based on event type
+                if deletedState.eventType == .feed, let feedEvent = deletedState.eventData as? FeedEvent {
+                    // Add back to feed events
+                    if var currentFeedEvents = feedEvents[deletedState.dateString] {
+                        currentFeedEvents.append(feedEvent)
+                        feedEvents[deletedState.dateString] = currentFeedEvents
+                    } else {
+                        feedEvents[deletedState.dateString] = [feedEvent]
+                    }
+                    
+                    // Add back to general events
+                    if var currentEvents = events[deletedState.dateString] {
+                        currentEvents.append(feedEvent.toEvent())
+                        events[deletedState.dateString] = currentEvents
+                    } else {
+                        events[deletedState.dateString] = [feedEvent.toEvent()]
+                    }
+                    
+                    // Re-schedule notification
+                    NotificationManager.shared.scheduleFeedNotification(for: feedEvent)
+                    
+                    // Post notification about event restoration
+                    NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: feedEvent.id)
+                    
+                    // Cancel the cleanup timer
+                    deletionTimers[feedEvent.id]?.invalidate()
+                    deletionTimers.removeValue(forKey: feedEvent.id)
+                    
+                    // Provide haptic feedback for undo
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
+                else if deletedState.eventType == .sleep, let sleepEvent = deletedState.eventData as? SleepEvent {
+                    // Add back to sleep events
+                    if var currentSleepEvents = sleepEvents[deletedState.dateString] {
+                        currentSleepEvents.append(sleepEvent)
+                        sleepEvents[deletedState.dateString] = currentSleepEvents
+                    } else {
+                        sleepEvents[deletedState.dateString] = [sleepEvent]
+                    }
+                    
+                    // Add back to general events
+                    if var currentEvents = events[deletedState.dateString] {
+                        currentEvents.append(sleepEvent.toEvent())
+                        events[deletedState.dateString] = currentEvents
+                    } else {
+                        events[deletedState.dateString] = [sleepEvent.toEvent()]
+                    }
+                    
+                    // Re-schedule notification
+                    NotificationManager.shared.scheduleSleepNotification(for: sleepEvent)
+                    
+                    // Post notification about event restoration
+                    NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: sleepEvent.id)
+                    
+                    // Cancel the cleanup timer
+                    deletionTimers[sleepEvent.id]?.invalidate()
+                    deletionTimers.removeValue(forKey: sleepEvent.id)
+                    
+                    // Provide haptic feedback for undo
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
                 
-                // Update the feed event
-                updateFeedEvent(restoredEvent, for: date)
-                
-                // Provide haptic feedback for undo
-                let generator = UIImpactFeedbackGenerator(style: .medium)
-                generator.impactOccurred()
+                // Create a special redo state for the deletion
+                redoEventStates.append(EventState(
+                    eventId: lastState.eventId,
+                    eventType: lastState.eventType,
+                    oldStartTime: lastState.oldStartTime,
+                    oldEndTime: lastState.oldEndTime,
+                    oldPrepTime: lastState.oldPrepTime,
+                    newStartTime: lastState.newStartTime,
+                    newEndTime: lastState.newEndTime,
+                    newPrepTime: lastState.newPrepTime,
+                    isDeletion: true
+                ))
             }
-            
-        case .sleep:
-            if let sleepEvent = getSleepEvent(id: lastState.eventId, for: date),
-               let oldEndTime = lastState.oldEndTime {
-                // Create a new sleep event with the old times
-                let restoredEvent = SleepEvent(
-                    id: sleepEvent.id,
-                    date: lastState.oldStartTime,
-                    sleepType: sleepEvent.sleepType,
-                    endTime: oldEndTime,
-                    notes: sleepEvent.notes,
-                    isTemplate: sleepEvent.isTemplate
-                )
+        } else {
+            // Handle normal (non-deletion) undos as before
+            switch lastState.eventType {
+            case .feed:
+                if let feedEvent = getFeedEvent(id: lastState.eventId, for: date) {
+                    // Create a new feed event with the old times
+                    let restoredEvent = FeedEvent(
+                        id: feedEvent.id,
+                        date: lastState.oldStartTime,
+                        amount: feedEvent.amount,
+                        breastMilkPercentage: feedEvent.breastMilkPercentage,
+                        formulaPercentage: feedEvent.formulaPercentage,
+                        preparationTime: lastState.oldPrepTime ?? feedEvent.preparationTime,
+                        notes: feedEvent.notes,
+                        isTemplate: feedEvent.isTemplate
+                    )
+                    
+                    // Update the feed event
+                    updateFeedEvent(restoredEvent, for: date)
+                    
+                    // Provide haptic feedback for undo
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
                 
-                // Update the sleep event
-                updateSleepEvent(restoredEvent, for: date)
-                
-                // Provide haptic feedback for undo
-                let generator = UIImpactFeedbackGenerator(style: .medium)
-                generator.impactOccurred()
+            case .sleep:
+                if let sleepEvent = getSleepEvent(id: lastState.eventId, for: date),
+                   let oldEndTime = lastState.oldEndTime {
+                    // Create a new sleep event with the old times
+                    let restoredEvent = SleepEvent(
+                        id: sleepEvent.id,
+                        date: lastState.oldStartTime,
+                        sleepType: sleepEvent.sleepType,
+                        endTime: oldEndTime,
+                        notes: sleepEvent.notes,
+                        isTemplate: sleepEvent.isTemplate
+                    )
+                    
+                    // Update the sleep event
+                    updateSleepEvent(restoredEvent, for: date)
+                    
+                    // Provide haptic feedback for undo
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
+            case .task: break
+                // TODO
             }
-        case .task: break
-            // TODO
         }
         
         // Remove the last event state after using it
@@ -296,54 +556,151 @@ class DataStore: ObservableObject {
         let dateComponents = calendar.dateComponents([.year, .month, .day], from: redoState.oldStartTime)
         let date = calendar.date(from: dateComponents) ?? Date()
         
-        // Save current state for potential undo before modifying
-        saveCurrentStateForUndo(eventId: redoState.eventId, for: date)
-        
-        switch redoState.eventType {
-        case .feed:
-            if let feedEvent = getFeedEvent(id: redoState.eventId, for: date) {
-                // Create a new feed event with the redo times
-                let restoredEvent = FeedEvent(
-                    id: feedEvent.id,
-                    date: redoState.newStartTime,
-                    amount: feedEvent.amount,
-                    breastMilkPercentage: feedEvent.breastMilkPercentage,
-                    formulaPercentage: feedEvent.formulaPercentage,
-                    preparationTime: redoState.newPrepTime ?? feedEvent.preparationTime,
-                    notes: feedEvent.notes,
-                    isTemplate: feedEvent.isTemplate
-                )
-                
-                // Update the feed event
-                updateFeedEvent(restoredEvent, for: date)
-                
-                // Provide haptic feedback for redo
-                let generator = UIImpactFeedbackGenerator(style: .medium)
-                generator.impactOccurred()
-            }
+        // Check if this is a deletion redo
+        if redoState.isDeletion {
+            // Save state for potential undo
+            lastEventStates.append(EventState(
+                eventId: redoState.eventId,
+                eventType: redoState.eventType,
+                oldStartTime: redoState.oldStartTime,
+                oldEndTime: redoState.oldEndTime,
+                oldPrepTime: redoState.oldPrepTime,
+                newStartTime: redoState.newStartTime,
+                newEndTime: redoState.newEndTime,
+                newPrepTime: redoState.newPrepTime,
+                isDeletion: true
+            ))
             
-        case .sleep:
-            if let sleepEvent = getSleepEvent(id: redoState.eventId, for: date),
-               let newEndTime = redoState.newEndTime {
-                // Create a new sleep event with the redo times
-                let restoredEvent = SleepEvent(
-                    id: sleepEvent.id,
-                    date: redoState.newStartTime,
-                    sleepType: sleepEvent.sleepType,
-                    endTime: newEndTime,
-                    notes: sleepEvent.notes,
-                    isTemplate: sleepEvent.isTemplate
-                )
+            // Re-delete the event
+            switch redoState.eventType {
+            case .feed:
+                if let feedEvent = getFeedEvent(id: redoState.eventId, for: date) {
+                    // Re-cache the event before re-deletion
+                    let deletedState = DeletedEventState(
+                        eventId: feedEvent.id,
+                        eventType: .feed,
+                        date: date,
+                        dateString: formatDate(date),
+                        eventData: feedEvent
+                    )
+                    deletedEventsCache[feedEvent.id] = deletedState
+                    
+                    // Remove from feed events and events collections
+                    if var currentFeedEvents = feedEvents[formatDate(date)] {
+                        currentFeedEvents.removeAll(where: { $0.id == feedEvent.id })
+                        feedEvents[formatDate(date)] = currentFeedEvents
+                    }
+                    
+                    if var currentEvents = events[formatDate(date)] {
+                        currentEvents.removeAll(where: { $0.id == feedEvent.id })
+                        events[formatDate(date)] = currentEvents
+                    }
+                    
+                    // Cancel notification
+                    NotificationManager.shared.cancelNotification(for: feedEvent.id)
+                    
+                    // Post notification about the event deletion
+                    NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: feedEvent.id)
+                    
+                    // Schedule removal from cache after delay
+                    scheduleDeletionCleanup(eventId: feedEvent.id)
+                    
+                    // Provide haptic feedback
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
                 
-                // Update the sleep event
-                updateSleepEvent(restoredEvent, for: date)
+            case .sleep:
+                if let sleepEvent = getSleepEvent(id: redoState.eventId, for: date) {
+                    // Re-cache the event before re-deletion
+                    let deletedState = DeletedEventState(
+                        eventId: sleepEvent.id,
+                        eventType: .sleep,
+                        date: date,
+                        dateString: formatDate(date),
+                        eventData: sleepEvent
+                    )
+                    deletedEventsCache[sleepEvent.id] = deletedState
+                    
+                    // Remove from sleep events and events collections
+                    if var currentSleepEvents = sleepEvents[formatDate(date)] {
+                        currentSleepEvents.removeAll(where: { $0.id == sleepEvent.id })
+                        sleepEvents[formatDate(date)] = currentSleepEvents
+                    }
+                    
+                    if var currentEvents = events[formatDate(date)] {
+                        currentEvents.removeAll(where: { $0.id == sleepEvent.id })
+                        events[formatDate(date)] = currentEvents
+                    }
+                    
+                    // Cancel notification
+                    NotificationManager.shared.cancelNotification(for: sleepEvent.id)
+                    
+                    // Post notification about the event deletion
+                    NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: sleepEvent.id)
+                    
+                    // Schedule removal from cache after delay
+                    scheduleDeletionCleanup(eventId: sleepEvent.id)
+                    
+                    // Provide haptic feedback
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
                 
-                // Provide haptic feedback for redo
-                let generator = UIImpactFeedbackGenerator(style: .medium)
-                generator.impactOccurred()
+            case .task: break
+                // TODO
             }
-        case .task: break
-            // TODO
+        } else {
+            // Handle non-deletion redos as before
+            // Save current state for potential undo before modifying
+            saveCurrentStateForUndo(eventId: redoState.eventId, for: date)
+            
+            switch redoState.eventType {
+            case .feed:
+                if let feedEvent = getFeedEvent(id: redoState.eventId, for: date) {
+                    // Create a new feed event with the redo times
+                    let restoredEvent = FeedEvent(
+                        id: feedEvent.id,
+                        date: redoState.newStartTime,
+                        amount: feedEvent.amount,
+                        breastMilkPercentage: feedEvent.breastMilkPercentage,
+                        formulaPercentage: feedEvent.formulaPercentage,
+                        preparationTime: redoState.newPrepTime ?? feedEvent.preparationTime,
+                        notes: feedEvent.notes,
+                        isTemplate: feedEvent.isTemplate
+                    )
+                    
+                    // Update the feed event
+                    updateFeedEvent(restoredEvent, for: date)
+                    
+                    // Provide haptic feedback for redo
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
+                
+            case .sleep:
+                if let sleepEvent = getSleepEvent(id: redoState.eventId, for: date),
+                   let newEndTime = redoState.newEndTime {
+                    // Create a new sleep event with the redo times
+                    let restoredEvent = SleepEvent(
+                        id: sleepEvent.id,
+                        date: redoState.newStartTime,
+                        sleepType: sleepEvent.sleepType,
+                        endTime: newEndTime,
+                        notes: sleepEvent.notes,
+                        isTemplate: sleepEvent.isTemplate
+                    )
+                    
+                    // Update the sleep event
+                    updateSleepEvent(restoredEvent, for: date)
+                    
+                    // Provide haptic feedback for redo
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
+            case .task: break
+                // TODO
+            }
         }
         
         // Remove the redo event state after using it
@@ -608,6 +965,9 @@ class DataStore: ObservableObject {
                 // Update notification
                 NotificationManager.shared.cancelNotification(for: event.id)
                 NotificationManager.shared.scheduleFeedNotification(for: event)
+                
+                // Add this line to post a notification about the event change
+                NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
             }
         }
     }
@@ -632,12 +992,64 @@ class DataStore: ObservableObject {
                 // Update notification
                 NotificationManager.shared.cancelNotification(for: event.id)
                 NotificationManager.shared.scheduleSleepNotification(for: event)
+                
+                // Add this line to post a notification about the event change
+                NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
+            }
+        }
+    }
+
+    func updateTaskEvent(_ event: TaskEvent, for date: Date) {
+        let dateString = formatDate(date)
+        
+        // Update in general events
+        if var currentEvents = events[dateString] {
+            if let index = currentEvents.firstIndex(where: { $0.id == event.id }) {
+                currentEvents[index] = event.toEvent()
+                events[dateString] = currentEvents
+            }
+        }
+        
+        // Update in task events
+        if var currentTaskEvents = taskEvents[dateString] {
+            if let index = currentTaskEvents.firstIndex(where: { $0.id == event.id }) {
+                currentTaskEvents[index] = event
+                taskEvents[dateString] = currentTaskEvents
+                
+                // Cancel any existing notifications for this task
+                NotificationManager.shared.cancelNotification(for: event.id)
+                
+                // Post notification about event update
+                NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
             }
         }
     }
     
     func deleteFeedEvent(_ event: FeedEvent, for date: Date) {
         let dateString = formatDate(date)
+        
+        // Cache the event before deletion
+        let deletedState = DeletedEventState(
+            eventId: event.id,
+            eventType: .feed,
+            date: date,
+            dateString: dateString,
+            eventData: event
+        )
+        deletedEventsCache[event.id] = deletedState
+        
+        // Save deletion state for undo
+        lastEventStates.append(EventState(
+            eventId: event.id,
+            eventType: .feed,
+            oldStartTime: event.date,
+            oldEndTime: nil,
+            oldPrepTime: event.preparationTime,
+            newStartTime: event.date,
+            newEndTime: nil,
+            newPrepTime: event.preparationTime,
+            isDeletion: true
+        ))
         
         // Delete from events
         if var currentEvents = events[dateString] {
@@ -652,25 +1064,183 @@ class DataStore: ObservableObject {
             
             // Cancel notification
             NotificationManager.shared.cancelNotification(for: event.id)
+            
+            // Post notification about the event deletion
+            NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
         }
+        
+        // Schedule removal from cache after delay
+        scheduleDeletionCleanup(eventId: event.id)
+        
+        // Provide haptic feedback to confirm deletion
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
     }
     
     func deleteSleepEvent(_ event: SleepEvent, for date: Date) {
         let dateString = formatDate(date)
         
+        // Log the deletion operation
+        print("DataStore: Deleting sleep event ID \(event.id) for date \(dateString)")
+        
+        // Cache the event before deletion
+        let deletedState = DeletedEventState(
+            eventId: event.id,
+            eventType: .sleep,
+            date: date,
+            dateString: dateString,
+            eventData: event
+        )
+        deletedEventsCache[event.id] = deletedState
+        
+        // Save deletion state for undo
+        lastEventStates.append(EventState(
+            eventId: event.id,
+            eventType: .sleep,
+            oldStartTime: event.date,
+            oldEndTime: event.endTime,
+            oldPrepTime: nil,
+            newStartTime: event.date,
+            newEndTime: event.endTime,
+            newPrepTime: nil,
+            isDeletion: true
+        ))
+        
         // Delete from events
         if var currentEvents = events[dateString] {
+            let countBefore = currentEvents.count
             currentEvents.removeAll(where: { $0.id == event.id })
+            let countAfter = currentEvents.count
+            print("DataStore: Removed \(countBefore - countAfter) entries from events array")
             events[dateString] = currentEvents
         }
         
         // Delete from sleep events
         if var currentSleepEvents = sleepEvents[dateString] {
+            let countBefore = currentSleepEvents.count
             currentSleepEvents.removeAll(where: { $0.id == event.id })
+            let countAfter = currentSleepEvents.count
+            print("DataStore: Removed \(countBefore - countAfter) entries from sleepEvents array")
             sleepEvents[dateString] = currentSleepEvents
             
             // Cancel notification
             NotificationManager.shared.cancelNotification(for: event.id)
+            
+            // Force UI update by triggering objectWillChange
+            objectWillChange.send()
+            
+            // Provide haptic feedback to confirm deletion
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+            
+            // Post notification about the event deletion
+            NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
+        }
+        
+        // Schedule removal from cache after delay
+        scheduleDeletionCleanup(eventId: event.id)
+    }
+    
+    func deleteTaskEvent(_ event: TaskEvent, for date: Date) {
+        let dateString = formatDate(date)
+        
+        // Cache the event before deletion
+        let deletedState = DeletedEventState(
+            eventId: event.id,
+            eventType: .task,
+            date: date,
+            dateString: dateString,
+            eventData: event
+        )
+        deletedEventsCache[event.id] = deletedState
+        
+        // Save deletion state for undo
+        lastEventStates.append(EventState(
+            eventId: event.id,
+            eventType: .task,
+            oldStartTime: event.date,
+            oldEndTime: event.endTime,
+            oldPrepTime: nil,
+            newStartTime: event.date,
+            newEndTime: event.endTime,
+            newPrepTime: nil,
+            isDeletion: true
+        ))
+        
+        // Delete from general events
+        if var currentEvents = events[dateString] {
+            currentEvents.removeAll(where: { $0.id == event.id })
+            events[dateString] = currentEvents
+        }
+        
+        // Delete from task events
+        if var currentTaskEvents = taskEvents[dateString] {
+            currentTaskEvents.removeAll(where: { $0.id == event.id })
+            taskEvents[dateString] = currentTaskEvents
+            
+            // Trigger UI updates
+            NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
+        }
+        
+        // Schedule removal from cache after delay
+        scheduleDeletionCleanup(eventId: event.id)
+        
+        // Provide haptic feedback to confirm deletion
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+    }
+    
+    private func scheduleDeletionCleanup(eventId: UUID) {
+        // Cancel any existing timer for this event
+        deletionTimers[eventId]?.invalidate()
+        
+        // Create a new timer to permanently delete after delay (10 minutes = 600 seconds)
+        let timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: false) { [weak self] _ in
+            self?.permanentlyDeleteEvent(eventId: eventId)
+        }
+        
+        // Store the timer
+        deletionTimers[eventId] = timer
+    }
+    
+    private func permanentlyDeleteEvent(eventId: UUID) {
+        // Remove from cache
+        deletedEventsCache.removeValue(forKey: eventId)
+        
+        // Remove timer
+        deletionTimers.removeValue(forKey: eventId)
+        
+        print("Permanently deleted event ID \(eventId) from cache")
+    }
+    
+    internal func cleanupDeletionCaches() {
+        // Stop all timers
+        for (_, timer) in deletionTimers {
+            timer.invalidate()
+        }
+        deletionTimers.removeAll()
+        
+        // Remove all cached deleted events
+        deletedEventsCache.removeAll()
+        
+        print("Cleaned up all deletion caches")
+    }
+    
+    struct DeletedEventState {
+        let eventId: UUID
+        let eventType: EventType
+        let date: Date
+        let dateString: String
+        let eventData: Any // Will store either FeedEvent or SleepEvent
+        let deletionTime: Date
+        
+        init(eventId: UUID, eventType: EventType, date: Date, dateString: String, eventData: Any) {
+            self.eventId = eventId
+            self.eventType = eventType
+            self.date = date
+            self.dateString = dateString
+            self.eventData = eventData
+            self.deletionTime = Date() // Current time when deletion occurred
         }
     }
     
@@ -682,10 +1252,13 @@ class DataStore: ObservableObject {
         let oldEndTime: Date?
         let oldPrepTime: Date?
         
-        // Added for redo functionality - not optional for newStartTime to avoid unwrapping issues
+        // Added for redo functionality
         var newStartTime: Date
         var newEndTime: Date?
         var newPrepTime: Date?
+        
+        // Added to track if this state represents a deletion
+        var isDeletion: Bool
         
         // Constructor with just undo data
         init(eventId: UUID, eventType: EventType, oldStartTime: Date, oldEndTime: Date?, oldPrepTime: Date?) {
@@ -697,11 +1270,12 @@ class DataStore: ObservableObject {
             self.newStartTime = oldStartTime // Default to the same start time
             self.newEndTime = oldEndTime
             self.newPrepTime = oldPrepTime
+            self.isDeletion = false
         }
         
         // Constructor with both undo and redo data
         init(eventId: UUID, eventType: EventType, oldStartTime: Date, oldEndTime: Date?, oldPrepTime: Date?,
-             newStartTime: Date, newEndTime: Date?, newPrepTime: Date?) {
+             newStartTime: Date, newEndTime: Date?, newPrepTime: Date?, isDeletion: Bool = false) {
             self.eventId = eventId
             self.eventType = eventType
             self.oldStartTime = oldStartTime
@@ -710,6 +1284,7 @@ class DataStore: ObservableObject {
             self.newStartTime = newStartTime
             self.newEndTime = newEndTime
             self.newPrepTime = newPrepTime
+            self.isDeletion = isDeletion
         }
     }
 }

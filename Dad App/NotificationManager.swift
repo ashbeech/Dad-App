@@ -110,6 +110,38 @@ class NotificationManager {
         }
     }
     
+    func scheduleTaskNotification(for taskEvent: TaskEvent, at notificationTime: Date) {
+        // Don't schedule notifications for past events
+        if notificationTime < Date() {
+            return
+        }
+        
+        let content = UNMutableNotificationContent()
+        content.title = "Task Reminder: \(taskEvent.title)"
+        content.body = "Task scheduled to start at \(formatTime(taskEvent.date))"
+        if !taskEvent.notes.isEmpty {
+            content.body += " - \(taskEvent.notes)"
+        }
+        content.sound = .default
+        
+        let triggerDate = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: notificationTime)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: triggerDate, repeats: false)
+        
+        let request = UNNotificationRequest(
+            identifier: "task-\(taskEvent.id.uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        
+        UNUserNotificationCenter.current().add(request)
+    }
+    
+    private func formatTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+    
     private func scheduleEarlyNotification(for feedEvent: FeedEvent) {
         if feedEvent.date > Date().addingTimeInterval(30 * 60) {
             let earlyContent = UNMutableNotificationContent()
