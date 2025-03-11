@@ -59,15 +59,34 @@ struct DonutChartView: View {
         GeometryReader { geometry in
             ZStack {
                 // Draw the arc representing wake hours
-                ArcStroke(
-                    startAngle: arcStartAngle,
-                    endAngle: arcEndAngle,
-                    clockwise: false,
+                PreciseArcStroke(
+                    startAngle: arcStartAngle,    // Now using arcEndAngle as start (70°)
+                    endAngle: arcEndAngle,    // Now using arcStartAngle as end (110°)
+                    clockwise: true,            // Now clockwise instead of counterclockwise
                     lineWidth: donutWidth,
-                    color: Color.gray.opacity(0.7)
+                    color: Color.gray.opacity(0.7),
+                    onDoubleTap: { angle in
+                        // Only proceed if not already dragging something
+                        if !isDragging {
+                            // Convert angle to time
+                            let tappedTime = timeFromAngle(angle)
+                            
+                            // Debug logging
+                            print("Double tap at angle: \(angle)°, calculated time: \(formatTime(tappedTime))")
+                            
+                            // Call the callback with the tapped time
+                            onAddEventTapped(tappedTime)
+                            
+                            // Provide haptic feedback
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
+                        }
+                    }
                 )
+                .frame(width: geometry.size.width + donutWidth, height: geometry.size.height + donutWidth)
+                //.padding()
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                 .gesture(
-                    // We'll use a DragGesture with minimal movement to capture the exact tap location
                     TapGesture(count: 2)
                         .onEnded { _ in
                             // Only proceed if not already dragging something
@@ -105,7 +124,7 @@ struct DonutChartView: View {
                     .zIndex(100)
                 
                 // Optional: Add time markers for better readability
-                timeMarkersView(geometry: geometry)
+                //timeMarkersView(geometry: geometry)
                 
                 // Time label during drag
                 dragTimeLabelsView(geometry: geometry)
@@ -162,7 +181,7 @@ struct DonutChartView: View {
                 ) { _ in
                     // Force complete view refresh with longer delay to ensure dataStore updates are complete
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        print("BabyTimeChanged notification received: Wake=\(self.dataStore.baby.wakeTime), Bed=\(self.dataStore.baby.bedTime)")
+                        //print("BabyTimeChanged notification received: Wake=\(self.dataStore.baby.wakeTime), Bed=\(self.dataStore.baby.bedTime)")
                         
                         // Generate new UUID to force complete view redraw
                         withAnimation(.easeInOut(duration: 0.5)) {
@@ -190,7 +209,9 @@ struct DonutChartView: View {
                 timer?.invalidate()
                 timer = nil
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
+            //.frame(width: geometry.size.width * 1.2, height: geometry.size.height * 1.2)
+            //.frame(width: geometry.size.width + donutWidth, height: geometry.size.height + donutWidth)
+            //.frame(width: geometry.size.width, height: geometry.size.height)
             .id(forceRedraw)
         }
         .aspectRatio(1, contentMode: .fit)
@@ -441,7 +462,7 @@ struct DonutChartView: View {
                     ) { notification in
                         if let eventId = notification.object as? UUID, eventId == event.id {
                             // Force refresh when pause state changes
-                            print("DonutChart: Received NapPauseStateChanged for event \(eventId)")
+                            //print("DonutChart: Received NapPauseStateChanged for event \(eventId)")
                             DispatchQueue.main.async {
                                 refreshTrigger.toggle()
                             }
@@ -501,8 +522,8 @@ struct DonutChartView: View {
         let endMinutes = (endComponents.hour ?? 0) * 60 + (endComponents.minute ?? 0)
         
         // Debug log for time validation
-        print("Validating times - Wake: \(wakeMinutes/60):\(wakeMinutes%60), Bed: \(bedMinutes/60):\(bedMinutes%60)")
-        print("Start: \(startMinutes/60):\(startMinutes%60), End: \(endMinutes/60):\(endMinutes%60)")
+        //print("Validating times - Wake: \(wakeMinutes/60):\(wakeMinutes%60), Bed: \(bedMinutes/60):\(bedMinutes%60)")
+        //print("Start: \(startMinutes/60):\(startMinutes%60), End: \(endMinutes/60):\(endMinutes%60)")
         
         // Check if bedtime is after midnight
         let isBedtimeAfterMidnight = bedMinutes < wakeMinutes
@@ -512,7 +533,7 @@ struct DonutChartView: View {
         ? (24 * 60 - wakeMinutes) + bedMinutes
         : bedMinutes - wakeMinutes
         
-        print("Total waking minutes: \(totalWakingMinutes), isBedtimeAfterMidnight: \(isBedtimeAfterMidnight)")
+        //print("Total waking minutes: \(totalWakingMinutes), isBedtimeAfterMidnight: \(isBedtimeAfterMidnight)")
         
         // Initialize validated times with input times
         var validStartMinutes = startMinutes
@@ -652,8 +673,8 @@ struct DonutChartView: View {
         let validStartTime = calendar.date(from: finalStartComponents) ?? startTime
         let validEndTime = calendar.date(from: finalEndComponents) ?? endTime
         
-        print("Validated: Start: \(calendar.dateComponents([.hour, .minute], from: validStartTime).hour ?? 0):\(calendar.dateComponents([.hour, .minute], from: validStartTime).minute ?? 0), End: \(calendar.dateComponents([.hour, .minute], from: validEndTime).hour ?? 0):\(calendar.dateComponents([.hour, .minute], from: validEndTime).minute ?? 0)")
-        
+        /*print("Validated: Start: \(calendar.dateComponents([.hour, .minute], from: validStartTime).hour ?? 0):\(calendar.dateComponents([.hour, .minute], from: validStartTime).minute ?? 0), End: \(calendar.dateComponents([.hour, .minute], from: validEndTime).hour ?? 0):\(calendar.dateComponents([.hour, .minute], from: validEndTime).minute ?? 0)")
+        */
         return (validStartTime, validEndTime)
     }
     
@@ -865,7 +886,7 @@ struct DonutChartView: View {
         let bedTime = bedtimeEvent?.date ?? dataStore.baby.bedTime
         
         // Print for debugging
-        print("Generating time markers: Wake=\(wakeTime), Bed=\(bedTime)")
+        //print("Generating time markers: Wake=\(wakeTime), Bed=\(bedTime)")
         
         let calendar = Calendar.current
         let wakeComponents = calendar.dateComponents([.hour, .minute], from: wakeTime)
@@ -886,11 +907,11 @@ struct DonutChartView: View {
         }
         
         let totalWakingHours = bedTimeHour - wakeTimeHour
-        print("Total waking hours: \(totalWakingHours)")
+        //print("Total waking hours: \(totalWakingHours)")
         
         // Generate appropriate time markers based on waking hours
         let markers = generateTimeMarkers(wakeHour: wakeTimeHour, totalWakingHours: totalWakingHours)
-        print("Generated markers: \(markers)")
+        //print("Generated markers: \(markers)")
         
         return AnyView(
             Group {
@@ -1491,10 +1512,10 @@ struct DonutChartView: View {
         return eventDate.flatMap { dataStore.getTaskEvent(id: event.id, for: $0) }
     }
     
-    private func formatTime(_ time: Date) -> String {
+    private func formatTime(_ date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: time)
+        formatter.timeStyle = .medium
+        return formatter.string(from: date)
     }
     
     // Constrain angle to stay on the arc
@@ -1591,26 +1612,24 @@ struct DonutChartView: View {
     }
     
     // Calculate time from angle position
-    private func timeFromAngle(_ angle: Double, wakeTime: Date? = nil, bedTime: Date? = nil) -> Date {
+    private func timeFromAngle(_ angle: Double) -> Date {
+        //print("Starting timeFromAngle calculation for angle: \(angle)°")
+        
         let calendar = Calendar.current
         
-        // Use provided wake/bedtime if available, otherwise get from dataStore
-        let effectiveWakeTime = wakeTime ?? {
-            if let wakeEvent = findWakeEvent() {
-                return wakeEvent.date
-            }
-            return dataStore.baby.wakeTime
-        }()
+        // Get wake and bedtime
+        let wakeEvent = findWakeEvent()
+        let bedtimeEvent = findBedtimeEvent()
+        let wakeTime = wakeEvent?.date ?? dataStore.baby.wakeTime
+        let bedTime = bedtimeEvent?.date ?? dataStore.baby.bedTime
         
-        let effectiveBedTime = bedTime ?? {
-            if let bedtimeEvent = findBedtimeEvent() {
-                return bedtimeEvent.date
-            }
-            return dataStore.baby.bedTime
-        }()
+        //print("Using wake time: \(formatTime(wakeTime)), bed time: \(formatTime(bedTime))")
         
-        let wakeComponents = calendar.dateComponents([.hour, .minute], from: effectiveWakeTime)
-        let bedComponents = calendar.dateComponents([.hour, .minute], from: effectiveBedTime)
+        // Debug the input values
+        //print("ANGLE TO TIME: Input angle=\(angle), wakeTime=\(formatTime(wakeTime)), bedTime=\(formatTime(bedTime))")
+        
+        let wakeComponents = calendar.dateComponents([.hour, .minute], from: wakeTime)
+        let bedComponents = calendar.dateComponents([.hour, .minute], from: bedTime)
         
         guard let wakeHour = wakeComponents.hour, let wakeMinute = wakeComponents.minute,
               let bedHour = bedComponents.hour, let bedMinute = bedComponents.minute else {
@@ -1636,10 +1655,8 @@ struct DonutChartView: View {
             relativeAngle = totalAngleSweep // Cap at the arc's end
         }
         
-        // Convert angle to normalized time position (0-1)
+        // Convert normalized angle to time - CRITICAL calculation
         let normalizedTime = relativeAngle / totalAngleSweep
-        
-        // Convert normalized time to minutes since wake time
         let minutesSinceWake = Int(normalizedTime * Double(totalWakingMinutes))
         
         // Create a date with the correct time
@@ -1660,7 +1677,15 @@ struct DonutChartView: View {
             dateComponents.day = (dateComponents.day ?? 0) + 1
         }
         
-        return calendar.date(from: dateComponents) ?? Date()
+        let resultTime = calendar.date(from: dateComponents) ?? Date()
+        
+        // Debug the calculation
+        //print("ANGLE TO TIME: angle=\(angle), normalized=\(normalizedTime), minutesSinceWake=\(minutesSinceWake)")
+        //print("ANGLE TO TIME: Result hours=\(hours), minutes=\(minutes), time=\(formatTime(resultTime))")
+        
+        let resultDate = calendar.date(from: dateComponents) ?? Date()
+        //print("Final calculated time: \(formatTime(resultDate))")
+        return resultDate
     }
     
     private func setupObserversForWakeTimeBedTimeChanges() {
@@ -2352,7 +2377,7 @@ struct DonutChartView: View {
                 currentActiveEvent = ActiveEvent.from(sleepEvent: ongoingNap)
                 
                 // Log for debugging
-                print("Found ongoing nap: \(ongoingNap.id)")
+                //print("Found ongoing nap: \(ongoingNap.id)")
             } else {
                 // Clear any existing active event if there are no ongoing naps
                 if currentActiveEvent != nil {
@@ -2460,6 +2485,7 @@ struct SleepArcCapsule: View {
                         endAngle: endAngle,
                         donutWidth: donutWidth
                     )
+                    .zIndex(2)
                     .frame(width: geometry.size.width, height: geometry.size.height)
                 }
             }
@@ -2676,6 +2702,159 @@ struct Arc: Shape {
     }
 }
 
+struct PreciseArcStroke: UIViewRepresentable {
+    var startAngle: Double
+    var endAngle: Double
+    var clockwise: Bool
+    var lineWidth: CGFloat
+    var color: Color
+    var onDoubleTap: ((Double) -> Void)
+    
+    func makeUIView(context: Context) -> ArcTouchView {
+        let view = ArcTouchView(
+            startAngle: startAngle,
+            endAngle: endAngle,
+            clockwise: clockwise,
+            lineWidth: lineWidth,
+            color: UIColor(color)
+        )
+        view.onDoubleTap = onDoubleTap
+        view.clipsToBounds = false
+        return view
+    }
+    
+    func updateUIView(_ uiView: ArcTouchView, context: Context) {
+        uiView.startAngle = startAngle
+        uiView.endAngle = endAngle
+        uiView.clockwise = clockwise
+        uiView.lineWidth = lineWidth
+        uiView.color = UIColor(color)
+        uiView.onDoubleTap = onDoubleTap
+        uiView.setNeedsDisplay()
+    }
+    
+    // UIKit view that can detect exact tap positions
+    class ArcTouchView: UIView {
+        var startAngle: Double
+        var endAngle: Double
+        var clockwise: Bool
+        var lineWidth: CGFloat
+        var color: UIColor
+        var onDoubleTap: ((Double) -> Void)?
+        
+        init(startAngle: Double, endAngle: Double, clockwise: Bool, lineWidth: CGFloat, color: UIColor) {
+            self.startAngle = startAngle
+            self.endAngle = endAngle
+            self.clockwise = clockwise
+            self.lineWidth = lineWidth
+            self.color = color
+            super.init(frame: .zero)
+            
+            // Setup gesture recognizer
+            let doubleTapGesture = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+            doubleTapGesture.numberOfTapsRequired = 2
+            self.addGestureRecognizer(doubleTapGesture)
+            
+            // Make sure we can receive touch events
+            self.isUserInteractionEnabled = true
+        }
+        
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+        
+        @objc func handleDoubleTap(_ gestureRecognizer: UITapGestureRecognizer) {
+            let tapLocation = gestureRecognizer.location(in: self)
+            let center = CGPoint(x: bounds.midX, y: bounds.midY)
+            
+            // Calculate angle in radians
+            let dx = tapLocation.x - center.x
+            let dy = tapLocation.y - center.y
+            
+            var angle = atan2(dy, dx) * 180 / .pi
+            
+            // Normalize to 0-360 range
+            if angle < 0 {
+                angle += 360
+            }
+            
+            //print("Precise tap detected at angle: \(angle)°")
+            onDoubleTap?(angle)
+        }
+        
+        override func draw(_ rect: CGRect) {
+            guard let context = UIGraphicsGetCurrentContext() else { return }
+            
+            let center = CGPoint(x: bounds.midX, y: bounds.midY)
+            let radius = min(bounds.width, bounds.height) / 2 - lineWidth / 2
+            
+            // Convert angles to radians
+            let startRad = startAngle * .pi / 180
+            let endRad = endAngle * .pi / 180
+            
+            // Clear context
+            context.clear(rect)
+            
+            // Setup stroke
+            context.setStrokeColor(color.cgColor)
+            context.setLineWidth(lineWidth)
+            
+            // Draw arc
+            context.addArc(
+                center: center,
+                radius: radius,
+                startAngle: CGFloat(startRad),
+                endAngle: CGFloat(endRad),
+                clockwise: !clockwise // UIKit uses opposite convention
+            )
+            
+            context.strokePath()
+        }
+    }
+}
+
+struct ArcStroke: View {
+    var startAngle: Double
+    var endAngle: Double
+    var clockwise: Bool
+    var lineWidth: CGFloat
+    var color: Color
+    var onDoubleTap: ((Double) -> Void)?  // Keep original signature
+    
+    var body: some View {
+        GeometryReader { geometry in
+            Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
+                .stroke(color, lineWidth: lineWidth)
+                .background(
+                    Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
+                        .stroke(Color.clear, lineWidth: lineWidth * 1.5)
+                )
+                .contentShape(
+                    Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
+                        .stroke(lineWidth: lineWidth * 1.5)
+                )
+                .gesture(
+                    // Use TapGesture with count: 2 for double tap
+                    TapGesture(count: 2)
+                        .onEnded { _ in
+                            // Use a more accurate method to detect tap location
+                            // For now, we'll use the existing angle calculation in DonutChartView
+                            let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                            
+                            // Since we can't get the tap location directly with TapGesture,
+                            // we'll use a point halfway between arcStartAngle and arcEndAngle
+                            // This is for compatibility - not ideal but will compile
+                            let midAngle = (startAngle + endAngle) / 2
+                            
+                            // Call the callback with the calculated angle
+                            onDoubleTap?(midAngle)
+                        }
+                )
+        }
+    }
+}
+
+/*
 // A stroke style for the arc with customizable width
 struct ArcStroke: View {
     var startAngle: Double
@@ -2683,19 +2862,65 @@ struct ArcStroke: View {
     var clockwise: Bool
     var lineWidth: CGFloat
     var color: Color
+    var onDoubleTap: ((Double) -> Void)?  // Callback for double tap
     
     var body: some View {
-        Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
-            .stroke(color, lineWidth: lineWidth)
-            // Add a transparent stroke with wider width to increase the tap area
-            .background(
-                Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
-                    .stroke(Color.clear, lineWidth: lineWidth * 1.5)
-            )
-            // This makes the view hittable for tap gestures even if it's just a stroke
-            .contentShape(
-                Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
-                    .stroke(lineWidth: lineWidth * 1.5)
-            )
+        GeometryReader { geometry in
+            Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
+                .stroke(color, lineWidth: lineWidth)
+                .contentShape(
+                    Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
+                        .stroke(lineWidth: lineWidth * 1.5)
+                )
+                .gesture(
+                    TapGesture(count: 2)
+                        .onEnded { _ in
+                            if let onDoubleTap = onDoubleTap {
+                                // Fix: Use DragGesture with minDistance: 0 to get the tap location
+                                // Since we can't get the tap location directly from TapGesture
+                                
+                                // Calculate approx center of arc for testing
+                                let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                                
+                                // Calculate a reasonable angle based on the arc midpoint
+                                // This is just a fallback; ideally we'd get the actual tap location
+                                let midpointAngle = (startAngle + endAngle) / 2
+                                
+                                // Log for debugging
+                                print("DOUBLE TAP detected - using arc midpoint angle: \(midpointAngle)")
+                                
+                                // Call the callback with the calculated angle
+                                onDoubleTap(midpointAngle)
+                            }
+                        }
+                )
+                // Add a secondary gesture for testing/debugging
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onEnded { value in
+                            // This won't interfere with the double tap but will log the position
+                            let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                            let dx = value.location.x - center.x
+                            let dy = value.location.y - center.y
+                            var angle = atan2(dy, dx) * 180 / .pi
+                            if angle < 0 { angle += 360 }
+                            
+                            print("TAP DEBUG: Location \(value.location), angle \(angle)")
+                        }
+                )
+        }
+    }
+}*/
+
+extension CGRect {
+    var center: CGPoint {
+        CGPoint(x: midX, y: midY)
+    }
+}
+
+// Extension to convert SwiftUI Color to UIColor if needed
+extension UIColor {
+    convenience init(_ color: Color) {
+        self.init(cgColor: color.cgColor ?? UIColor.gray.cgColor)
     }
 }

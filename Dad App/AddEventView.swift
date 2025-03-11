@@ -23,7 +23,6 @@ struct AddEventView: View {
     
     var body: some View {
         ZStack {
-            // Use a fullscreen ZStack instead of NavigationView
             VStack {
                 HStack {
                     Text("Add New Event")
@@ -33,12 +32,7 @@ struct AddEventView: View {
                     Spacer()
                     
                     Button("Cancel") {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            offset = UIScreen.main.bounds.height
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            presentationMode.wrappedValue.dismiss()
-                        }
+                        presentationMode.wrappedValue.dismiss()
                     }
                     .foregroundColor(.blue)
                 }
@@ -55,26 +49,36 @@ struct AddEventView: View {
                 // Pass the initialTime to child views
                 if eventType == .feed {
                     AddFeedView(date: date, initialTime: initialTime)
+                        .environmentObject(dataStore)
                 } else if eventType == .sleep {
                     AddSleepView(date: date, initialTime: initialTime)
+                        .environmentObject(dataStore)
                 } else {
                     AddTaskView(date: date, initialTime: initialTime)
+                        .environmentObject(dataStore)
                 }
                 
                 Spacer()
             }
-            .background(Color(.systemBackground))
             .cornerRadius(16)
             .shadow(radius: 10)
-            .offset(y: offset)
+            .background(Color.clear)
+            //.offset(y: offset)
             .edgesIgnoringSafeArea(.all)
         }
+        .offset(y: offset)
         .onAppear {
             // Animate the form sliding up when it appears
             offset = UIScreen.main.bounds.height
             withAnimation(.easeOut(duration: 0.3)) {
                 offset = 0
             }
+        }
+        .onDisappear() {
+            // Animate the form sliding up when it appears
+             withAnimation(.easeOut(duration: 0.3)) {
+                 offset = UIScreen.main.bounds.height
+             }
         }
     }
 }

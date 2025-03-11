@@ -81,6 +81,24 @@ struct EditSleepView: View {
             
             // Only show tracking controls for nap events
             if sleepEvent.sleepType == .nap {
+                // Add actual sleep duration display for naps
+                if let actualDuration = sleepEvent.actualSleepDuration {
+                    Section(header: Text("Actual Sleep Time")) {
+                        HStack {
+                            Image(systemName: "clock.fill")
+                                .foregroundColor(.purple)
+                            Text(formatDuration(actualDuration))
+                                .foregroundColor(.primary)
+                            Spacer()
+                            if sleepEvent.isOngoing {
+                                Text("(Live)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                
                 Section(header: Text("Tracking")) {
                     Toggle("Track in real-time", isOn: $isOngoing)
                         .toggleStyle(SwitchToggleStyle(tint: .purple))
@@ -263,5 +281,17 @@ struct EditSleepView: View {
         }
         
         saveEvent() // Also save the current instance
+    }
+    
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let hours = Int(duration) / 3600
+        let minutes = (Int(duration) % 3600) / 60
+        let seconds = Int(duration) % 60
+        
+        if hours > 0 {
+            return String(format: "%dh %dm %ds", hours, minutes, seconds)
+        } else {
+            return String(format: "%dm %ds", minutes, seconds)
+        }
     }
 }

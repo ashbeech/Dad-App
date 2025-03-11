@@ -46,8 +46,12 @@ struct ContentView: View {
                 selectedEvent: $selectedEvent,
                 filteredEventTypes: $filteredEventTypes,
                 onAddEventTapped: { tappedTime in
-                    // Store the tapped time
+                    // Save the tapped time for use in AddEventView
                     initialEventTime = tappedTime
+                    
+                    // Log for debugging
+                    //print("ContentView received tapped time: \(formatTime(tappedTime))")
+                    
                     // Show the add sheet
                     showingAddSheet = true
                 }
@@ -86,6 +90,11 @@ struct ContentView: View {
         .sheet(isPresented: $showingAddSheet) {
             AddEventView(date: currentDate, initialTime: initialEventTime)
                 .environmentObject(dataStore)
+            //.slideAnimation(isPresented: $showingAddSheet)
+            //.onAppear {
+            // Force log to verify the initialTime value
+            //print("ADD EVENT VIEW APPEARED with initialTime: \(formatTime(initialEventTime))")
+            //}
         }
         .sheet(item: $selectedEvent) { event in
             EditEventView(event: event, date: currentDate)
@@ -186,6 +195,26 @@ struct ContentView: View {
         return uniqueEvents
     }
 }
+
+/*
+ struct SlideAnimationModifier: ViewModifier {
+ @Binding var isPresented: Bool
+ let offsetY: CGFloat
+ 
+ func body(content: Content) -> some View {
+ content
+ .offset(y: isPresented ? 0 : offsetY)
+ .animation(.easeInOut(duration: 0.3), value: isPresented)
+ }
+ }*/
+/*
+ extension View {
+ func slideAnimation(isPresented: Binding<Bool>, offsetY: CGFloat = UIScreen.main.bounds.height) -> some View {
+ self.modifier(SlideAnimationModifier(isPresented: isPresented, offsetY: offsetY))
+ }
+ 
+ }
+ */
 
 struct SecondaryNavBar: View {
     var onUndoTapped: () -> Void

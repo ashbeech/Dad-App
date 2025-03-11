@@ -22,22 +22,31 @@ struct AddSleepView: View {
     @State private var showEndTime: Bool = false
     @State private var startImmediately: Bool = true
     
+    // New state for tracking overlap info
+    @State private var overlappingNap: SleepEvent? = nil
+    @State private var hasCheckedForOverlap: Bool = false
+    
     init(date: Date, initialTime: Date = Date()) {
         self.date = date
         self.initialTime = initialTime
         
-        // Initialize with the provided initialTime instead of just the date
+        // Initialize with the provided initialTime
         let calendar = Calendar.current
         
         // Extract year, month, day from date and hour, minute from initialTime
         var dateComponents = calendar.dateComponents([.year, .month, .day], from: date)
-        let timeComponents = calendar.dateComponents([.hour, .minute], from: initialTime)
+        let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: initialTime)
         
         // Combine them
         dateComponents.hour = timeComponents.hour
         dateComponents.minute = timeComponents.minute
+        dateComponents.second = timeComponents.second
         
         let combinedDate = calendar.date(from: dateComponents) ?? initialTime
+        
+        // Debug logging
+        //print("AddSleepView initializing with time: \(formatTime(combinedDate))")
+        
         _startTime = State(initialValue: combinedDate)
         
         // Default end time is 30 mins after start time
@@ -46,33 +55,10 @@ struct AddSleepView: View {
     
     // Computed property to determine if save button should be disabled
     private var shouldDisableSaveButton: Bool {
-        // Get all ongoing naps for today
-        let ongoingNaps = dataStore.getOngoingSleepEvents(for: date).filter { $0.sleepType == .nap }
-        
-        // No ongoing naps means no restrictions
-        if ongoingNaps.isEmpty {
-            return false
+        if !hasCheckedForOverlap {
+            checkForOverlappingNaps()
         }
-        
-        // Check if the start time falls within any ongoing nap's time period
-        for ongoingNap in ongoingNaps {
-            let napEndTime = SleepUtilities.calculateEffectiveEndTime(sleepEvent: ongoingNap)
-            
-            if startTime >= ongoingNap.date && startTime <= napEndTime {
-                // Start time overlaps with an ongoing nap
-                
-                // If user has specified an end time, allow saving
-                if showEndTime {
-                    return false
-                }
-                
-                // If this would be another ongoing nap, disallow saving
-                return startImmediately
-            }
-        }
-        
-        // If start time doesn't overlap with any ongoing nap, always allow saving
-        return false
+        return overlappingNap != nil
     }
     
     var body: some View {
@@ -87,13 +73,17 @@ struct AddSleepView: View {
                 if showEndTime {
                     // Only show start time field if end time is being shown
                     DatePicker("Start Time", selection: $startTime, displayedComponents: .hourAndMinute)
+                        .onChange(of: startTime) { _, newValue in
+                            checkForOverlappingNaps()
+                        }
                     
                     DatePicker("End Time", selection: $endTime, displayedComponents: .hourAndMinute)
-                        .onChange(of: startTime) { _, newValue in
+                        .onChange(of: endTime) { _, newValue in
                             // Ensure end time is always after start time
-                            if endTime <= newValue {
-                                endTime = newValue.addingTimeInterval(30 * 60)
+                            if endTime <= startTime {
+                                endTime = startTime.addingTimeInterval(30 * 60)
                             }
+                            checkForOverlappingNaps()
                         }
                     
                     // Add button to remove end time
@@ -101,6 +91,7 @@ struct AddSleepView: View {
                         showEndTime = false
                         // Reset to "now" when end time is removed
                         startImmediately = true
+                        checkForOverlappingNaps()
                     }) {
                         HStack {
                             Image(systemName: "minus.circle.fill")
@@ -119,12 +110,16 @@ struct AddSleepView: View {
                             .foregroundColor(.secondary)
                             .font(.subheadline)
                     }
+                    .onAppear {
+                        checkForOverlappingNaps()
+                    }
                     
                     // Add button to add end time
                     Button(action: {
                         showEndTime = true
                         // Set end time to 30 minutes after current start time
                         endTime = startTime.addingTimeInterval(30 * 60)
+                        checkForOverlappingNaps()
                     }) {
                         HStack {
                             Image(systemName: "plus.circle.fill")
@@ -147,20 +142,49 @@ struct AddSleepView: View {
                         // If saving as template, always show end time option
                         if newValue {
                             showEndTime = true
+                            checkForOverlappingNaps()
                         }
                     }
             }
             
-            // Warning message if save button is disabled
-            if shouldDisableSaveButton {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text("There's already an ongoing nap at this time")
+            // Warning message if save button is disabled due to overlap
+            if let overlap = overlappingNap {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text("Time Conflict Detected")
+                            .font(.headline)
+                            .foregroundColor(.orange)
+                    }
+                    
+                    Text("This nap would overlap with an existing nap:")
                         .font(.caption)
-                        .foregroundColor(.orange)
+                        .foregroundColor(.secondary)
+                    
+                    HStack {
+                        Text(formatTime(overlap.date))
+                        Text("-")
+                        if overlap.isOngoing {
+                            Text("ongoing")
+                                .italic()
+                        } else {
+                            Text(formatTime(overlap.endTime))
+                        }
+                    }
+                    .font(.caption)
+                    .padding(6)
+                    .background(Color.purple.opacity(0.1))
+                    .cornerRadius(6)
+                    
+                    Text("Please choose a different time or adjust the existing nap.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                .padding(.horizontal)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(8)
             }
             
             Button(action: saveEvent) {
@@ -175,9 +199,62 @@ struct AddSleepView: View {
             .padding()
             .disabled(shouldDisableSaveButton)
         }
+        .onAppear {
+            checkForOverlappingNaps()
+        }
+    }
+    
+    private func checkForOverlappingNaps() {
+        hasCheckedForOverlap = true
+        
+        // Function to check if two time ranges overlap
+        func timeRangesOverlap(start1: Date, end1: Date, start2: Date, end2: Date) -> Bool {
+            return start1 < end2 && start2 < end1
+        }
+        
+        // Get the effective time range for this new nap
+        let effectiveStartTime = showEndTime ? startTime : Date()
+        let effectiveEndTime = showEndTime ? endTime : effectiveStartTime.addingTimeInterval(30 * 60)
+        
+        // Get all naps for the day
+        let dateString = dataStore.formatDate(date)
+        let sleepEvents = dataStore.sleepEvents[dateString] ?? []
+        
+        // Check for any overlapping naps
+        for napEvent in sleepEvents.filter({ $0.sleepType == .nap }) {
+            // For ongoing naps, use current time as the effective end time
+            let napEndTime = napEvent.isOngoing ?
+                (napEvent.isPaused ? (napEvent.lastPauseTime ?? Date()) : Date()) :
+                napEvent.endTime
+            
+            if timeRangesOverlap(
+                start1: effectiveStartTime,
+                end1: effectiveEndTime,
+                start2: napEvent.date,
+                end2: napEndTime
+            ) {
+                overlappingNap = napEvent
+                return
+            }
+        }
+        
+        // No overlap found
+        overlappingNap = nil
+    }
+    
+    private func formatTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
     
     private func saveEvent() {
+        // One final check for overlaps
+        checkForOverlappingNaps()
+        if overlappingNap != nil {
+            return // Don't save if there's an overlap
+        }
+        
         // Create a placeholder end time that's 8 hours after start
         // This is just for the data model, but the nap will be treated as ongoing
         let placeholderEndTime = startTime.addingTimeInterval(8 * 3600) // 8 hours is a long nap
@@ -213,6 +290,10 @@ struct AddSleepView: View {
             
             dataStore.baby = updatedBaby
         }
+        
+        // Provide haptic feedback for successful save
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
         
         presentationMode.wrappedValue.dismiss()
     }

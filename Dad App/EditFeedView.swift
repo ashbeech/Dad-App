@@ -87,12 +87,13 @@ struct EditFeedView: View {
                         }
                         
                         // Animate form sliding down
+                        /*
                         withAnimation(.easeInOut(duration: 0.3)) {
                             offset = UIScreen.main.bounds.height
-                        }
+                        }*/
                         
                         // Delay to allow animation to complete before saving
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.0) {
                             saveEvent()
                         }
                     }
@@ -120,12 +121,12 @@ struct EditFeedView: View {
                         }
                         
                         // Animate form sliding down
-                        withAnimation(.easeInOut(duration: 0.3)) {
+                        /*withAnimation(.easeInOut(duration: 0.3)) {
                             offset = UIScreen.main.bounds.height
-                        }
+                        }*/
                         
                         // Delay to allow animation to complete before deleting
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.0) {
                             deleteEvent()
                         }
                     }
@@ -145,10 +146,10 @@ struct EditFeedView: View {
         .offset(y: offset)
         .onAppear {
             // Animate the form sliding up when it appears
-            offset = UIScreen.main.bounds.height
+            /*offset = UIScreen.main.bounds.height
             withAnimation(.easeOut(duration: 0.3)) {
                 offset = 0
-            }
+            }*/
         }
     }
     

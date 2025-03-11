@@ -214,29 +214,26 @@ class DataStore: ObservableObject {
     func stopOngoingNap(_ sleepEvent: SleepEvent, for date: Date) {
         var updatedEvent = sleepEvent
         
-        // Calculate total pause duration
-        var totalPauseDuration: TimeInterval = 0
-        for interval in sleepEvent.pauseIntervals {
-            totalPauseDuration += interval.resumeTime.timeIntervalSince(interval.pauseTime)
-        }
+        // Calculate effective duration using SleepUtilities for consistency
+        let effectiveDuration = SleepUtilities.calculateEffectiveDuration(sleepEvent: sleepEvent)
         
-        // If currently paused, add the current pause duration
-        if sleepEvent.isPaused, let pauseTime = sleepEvent.lastPauseTime {
-            totalPauseDuration += Date().timeIntervalSince(pauseTime)
-        }
+        // Set the actual sleep duration correctly
+        updatedEvent.actualSleepDuration = effectiveDuration
         
-        // Set the end time to now minus the total pause duration
+        // Set the end time to now
         let now = Date()
-        let effectiveEndTime = now.addingTimeInterval(-totalPauseDuration)
+        updatedEvent.endTime = now
         
-        // Update the event
-        updatedEvent.endTime = effectiveEndTime
+        // Mark as no longer ongoing
         updatedEvent.isOngoing = false
         updatedEvent.isPaused = false
         updatedEvent.lastPauseTime = nil
         
         // Save the updated event
         updateSleepEvent(updatedEvent, for: date)
+        
+        // Log for debugging
+        print("DataStore: Stopped nap with duration \(formatDuration(effectiveDuration))")
     }
     
     // Helper method to find the wake event for a given date
@@ -285,7 +282,7 @@ class DataStore: ObservableObject {
                     NotificationCenter.default.post(name: NSNotification.Name("NapStoppedDueToBedtime"), object: nap.id)
                 }
                 
-                print("Auto-stopped \(ongoingNaps.count) ongoing naps due to bedtime")
+                //print("Auto-stopped \(ongoingNaps.count) ongoing naps due to bedtime")
             }
         }
     }
@@ -972,8 +969,26 @@ class DataStore: ObservableObject {
         }
     }
     
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let hours = Int(duration) / 3600
+        let minutes = (Int(duration) % 3600) / 60
+        let seconds = Int(duration) % 60
+        
+        if hours > 0 {
+            return String(format: "%dh %dm %ds", hours, minutes, seconds)
+        } else {
+            return String(format: "%dm %ds", minutes, seconds)
+        }
+    }
+    
     func updateSleepEvent(_ event: SleepEvent, for date: Date) {
         let dateString = formatDate(date)
+        
+        // Create a copy to ensure we're preserving all properties
+        var eventCopy = event
+        
+        // Preserve the actual sleep duration as a top priority
+        let actualDuration = event.actualSleepDuration
         
         // Update in events
         if var currentEvents = events[dateString] {
@@ -986,8 +1001,15 @@ class DataStore: ObservableObject {
         // Update in sleep events
         if var currentSleepEvents = sleepEvents[dateString] {
             if let index = currentSleepEvents.firstIndex(where: { $0.id == event.id }) {
-                currentSleepEvents[index] = event
+                // Ensure actual duration is preserved
+                eventCopy.actualSleepDuration = actualDuration
+                currentSleepEvents[index] = eventCopy
                 sleepEvents[dateString] = currentSleepEvents
+                
+                // Add explicit log to track data saving
+                if let duration = actualDuration {
+                    print("DATA STORE: Saved sleep event with actual duration: \(formatDuration(duration))")
+                }
                 
                 // Update notification
                 NotificationManager.shared.cancelNotification(for: event.id)

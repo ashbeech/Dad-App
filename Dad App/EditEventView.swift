@@ -30,12 +30,7 @@ struct EditEventView: View {
                     Spacer()
                     
                     Button("Cancel") {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            offset = UIScreen.main.bounds.height
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            presentationMode.wrappedValue.dismiss()
-                        }
+                        presentationMode.wrappedValue.dismiss()
                     }
                     .foregroundColor(.blue)
                 }
@@ -58,11 +53,10 @@ struct EditEventView: View {
                                 .foregroundColor(.red)
                         }
                     case .task:
-                        // TODO: placeholder
-                        if let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date) {
-                            EditSleepView(sleepEvent: sleepEvent, date: date)
+                        if let taskEvent = dataStore.getTaskEvent(id: event.id, for: date) {
+                            EditTaskView(taskEvent: taskEvent, date: date)
                         } else {
-                            Text("Could not find sleep event details")
+                            Text("Could not find task event details")
                                 .foregroundColor(.red)
                         }
                     }
@@ -73,23 +67,18 @@ struct EditEventView: View {
             .background(Color(.systemBackground))
             .cornerRadius(16)
             .shadow(radius: 10)
-            .offset(y: offset)
+            //.offset(y: offset)
             .edgesIgnoringSafeArea(.all)
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("DismissEditView"))) { _ in
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    offset = UIScreen.main.bounds.height
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    presentationMode.wrappedValue.dismiss()
-                }
+                presentationMode.wrappedValue.dismiss()
             }
         }
         .onAppear {
             // Animate the form sliding up when it appears
-            offset = UIScreen.main.bounds.height
-            withAnimation(.easeOut(duration: 0.3)) {
-                offset = 0
-            }
+            //offset = UIScreen.main.bounds.height
+            //withAnimation(.easeOut(duration: 0.3)) {
+                //offset = 0
+            //}
         }
     }
 }

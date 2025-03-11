@@ -12,9 +12,9 @@ struct EventListView: View {
     let events: [Event]
     @Binding var selectedEvent: Event?
     
-    // Add timer for refreshing the list
+    // Add a UUID for forcing refreshes
+    @State private var listRefreshID = UUID()
     @State private var refreshTimer: Timer?
-    @State private var refreshTrigger: Bool = false
     
     var body: some View {
         if events.isEmpty {
@@ -33,35 +33,65 @@ struct EventListView: View {
                         .onTapGesture {
                             selectedEvent = event
                         }
+                        // Add a more stable ID that doesn't change with every timer update
+                        .id("event-row-\(event.id)")
                 }
             }
             .listStyle(PlainListStyle())
-            // Hidden element that forces the list to update when refreshTrigger changes
-            .background(
-                Color.clear
-                    .frame(width: 0, height: 0)
-                    .onAppear {
-                        setupRefreshTimer()
+            .id(listRefreshID) // Only refresh the entire list when needed
+            .onAppear {
+                setupRefreshTimer()
+                
+                // Listen for pause state changes that might need to refresh the entire list
+                NotificationCenter.default.addObserver(
+                    forName: NSNotification.Name("NapPauseStateChanged"),
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    // Avoid immediate refresh which can cause flickering
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        refreshList()
                     }
-                    .onDisappear {
-                        refreshTimer?.invalidate()
-                        refreshTimer = nil
+                }
+                
+                // Listen for nap stopped events
+                NotificationCenter.default.addObserver(
+                    forName: NSNotification.Name("NapStopped"),
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    // Refresh after a slight delay
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        refreshList()
                     }
-            )
-        }
-    }
-    
-    // Add method to set up a timer for periodic list refreshes
-    private func setupRefreshTimer() {
-        // Refresh the list every 0.5 seconds to update ongoing nap times
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            if hasOngoingEvents() {
-                refreshTrigger.toggle()
+                }
+            }
+            .onDisappear {
+                refreshTimer?.invalidate()
+                refreshTimer = nil
+                NotificationCenter.default.removeObserver(self)
             }
         }
     }
     
-    // Add method to check if there are any ongoing events in the list
+    // Add method to force refresh the entire list (use sparingly)
+    private func refreshList() {
+        //print("Refreshing entire event list")
+        listRefreshID = UUID()
+    }
+    
+    // Set up a timer for periodic checks, but not frequent refreshes
+    private func setupRefreshTimer() {
+        // Only refresh every 10 seconds to check for ongoing events
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
+            if hasOngoingEvents() {
+                // No need to refresh the whole list, individual rows handle their own timers
+                // This is just to periodically check if we need to do cleanup
+            }
+        }
+    }
+    
+    // Helper method to check if there are any ongoing events in the list
     private func hasOngoingEvents() -> Bool {
         for event in events {
             if event.type == .sleep,
@@ -82,8 +112,10 @@ struct EventRow: View {
     // Add these state variables
     @State private var currentFormattedDuration: String = ""
     @State private var timerID: UUID = UUID()
-    @State private var localTimer: Timer? = nil
     @State private var isPaused: Bool = false
+    
+    // Use the shared timer manager
+    @StateObject private var timerManager = NapTimerManager.shared
     
     var body: some View {
         HStack {
@@ -137,11 +169,6 @@ struct EventRow: View {
                             isPaused = sleepEvent.isPaused
                             updateCurrentDuration(sleepEvent: sleepEvent)
                             
-                            // Start a timer if not paused
-                            if !isPaused {
-                                startTimer(sleepEvent: sleepEvent)
-                            }
-                            
                             // Listen for pause state changes
                             NotificationCenter.default.addObserver(
                                 forName: NSNotification.Name("NapPauseStateChanged"),
@@ -153,14 +180,7 @@ struct EventRow: View {
                                    let updatedSleepEvent = dataStore.getSleepEvent(id: event.id, for: date) {
                                     // Update our local state
                                     isPaused = updatedSleepEvent.isPaused
-                                    print("EventRow received pause change: isPaused=\(isPaused)")
-                                    
-                                    // Manage timer based on new state
-                                    if isPaused {
-                                        stopTimer()
-                                    } else {
-                                        startTimer(sleepEvent: updatedSleepEvent)
-                                    }
+                                    //print("EventRow received pause change: isPaused=\(isPaused)")
                                     
                                     // Update duration immediately
                                     updateCurrentDuration(sleepEvent: updatedSleepEvent)
@@ -175,20 +195,22 @@ struct EventRow: View {
                             ) { notification in
                                 if let eventId = notification.object as? UUID,
                                    eventId == event.id {
-                                    // Stop our timer
-                                    stopTimer()
-                                    
                                     // Force a refresh
                                     timerID = UUID()
                                 }
                             }
                         }
                         .onDisappear {
-                            // Clean up timer and observer when view disappears
-                            stopTimer()
+                            // Clean up observer when view disappears
                             NotificationCenter.default.removeObserver(self)
                         }
                         .id(timerID) // Force refresh when timer ID changes
+                        .onReceive(timerManager.$timerTick) { _ in
+                            // Update duration from shared timer
+                            if let updatedSleepEvent = dataStore.getSleepEvent(id: event.id, for: date) {
+                                updateCurrentDuration(sleepEvent: updatedSleepEvent)
+                            }
+                        }
                 }
                 
                 if !event.notes.isEmpty {
@@ -206,56 +228,15 @@ struct EventRow: View {
         .padding(.vertical, 4)
     }
     
-    private func startTimer(sleepEvent: SleepEvent) {
-        // Stop any existing timer
-        stopTimer()
-        
-        print("Starting event row timer")
-        localTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            updateCurrentDuration(sleepEvent: sleepEvent)
-        }
-    }
-    
-    private func stopTimer() {
-        if localTimer != nil {
-            print("Stopping event row timer")
-            localTimer?.invalidate()
-            localTimer = nil
-        }
-    }
-    
     private func updateCurrentDuration(sleepEvent: SleepEvent) {
-        let elapsedTime = calculateEffectiveDuration(sleepEvent: sleepEvent)
-        currentFormattedDuration = formatDuration(elapsedTime)
-    }
-    
-    private func calculateEffectiveDuration(sleepEvent: SleepEvent) -> TimeInterval {
-        let now = Date()
-        var totalPauseTime: TimeInterval = 0
+        // Use shared timer manager to calculate and format duration
+        let elapsedTime = timerManager.calculateEffectiveDuration(sleepEvent: sleepEvent)
+        let newFormattedDuration = timerManager.formatDuration(elapsedTime)
         
-        // Calculate total pause time from completed intervals
-        for interval in sleepEvent.pauseIntervals {
-            totalPauseTime += interval.resumeTime.timeIntervalSince(interval.pauseTime)
-        }
-        
-        // If currently paused, add the current pause interval
-        if sleepEvent.isPaused, let pauseTime = sleepEvent.lastPauseTime {
-            totalPauseTime += now.timeIntervalSince(pauseTime)
-        }
-        
-        // Calculate total elapsed time
-        return now.timeIntervalSince(sleepEvent.date) - totalPauseTime
-    }
-    
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let hours = Int(duration) / 3600
-        let minutes = (Int(duration) % 3600) / 60
-        let seconds = Int(duration) % 60
-        
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            return String(format: "%02d:%02d", minutes, seconds)
+        // Only update if the displayed time has changed
+        if newFormattedDuration != currentFormattedDuration {
+            currentFormattedDuration = newFormattedDuration
+            timerID = UUID() // Force view update
         }
     }
     

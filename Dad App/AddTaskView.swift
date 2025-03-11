@@ -55,7 +55,23 @@ struct AddTaskView: View {
     var body: some View {
         Form {
             Section(header: Text("Task Details")) {
-                TextField("Task Title", text: $title)
+                TextField("What needs to be completed by the end time", text: $title)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                    .padding(.vertical, 4)
+                    .overlay(
+                        VStack(alignment: .leading) {
+                            Text("Objective")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 4)
+                                .padding(.top, -25)
+                                .background(Color(.systemBackground))
+                            Spacer()
+                        }
+                        .padding(.horizontal, -8),
+                        alignment: .topLeading
+                    )
                 
                 Picker("Priority", selection: $priority) {
                     ForEach(TaskPriority.allCases, id: \.self) { priority in
@@ -186,8 +202,8 @@ struct AddTaskView: View {
         // Only schedule if it's in the future
         if time > Date() {
             let content = UNMutableNotificationContent()
-            content.title = "Task Reminder: \(task.title)"
-            content.body = "Task scheduled to start at \(formatTime(task.date))"
+            content.title = "Reminder: \(task.title)"
+            content.body = "Objective scheduled to start at \(formatTime(task.date))"
             if !task.notes.isEmpty {
                 content.body += " - \(task.notes)"
             }

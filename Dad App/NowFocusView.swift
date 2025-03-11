@@ -13,14 +13,16 @@ struct NowFocusView: View {
     @Binding var currentActiveEvent: ActiveEvent?
     let date: Date
     
-    // A single local state to track UI updates
+    // State management
     @State private var localIsPaused: Bool = false
-    @State private var localTimer: Timer? = nil
     @State private var displayTime: String = "00:00"
+    @State private var timerID: UUID = UUID()
+    
+    // Use shared timer manager instead of local timer
+    @StateObject private var timerManager = NapTimerManager.shared
     
     var body: some View {
         ZStack {
-            // Content based on active event and date
             if let activeEvent = currentActiveEvent, activeEvent.type == .sleep,
                let sleepEvent = dataStore.getSleepEvent(id: activeEvent.id, for: date),
                sleepEvent.sleepType == .nap {
@@ -32,11 +34,11 @@ struct NowFocusView: View {
                     
                     Text(displayTime)
                         .font(.system(size: 24, weight: .bold, design: .monospaced))
-                        .foregroundColor(localIsPaused ? .orange : .primary)
+                        .foregroundColor(sleepEvent.isPaused ? .yellow : .white)
                         .padding(.bottom, 10)
+                        .id(timerID) // Force refresh of just the time display
                     
                     HStack(spacing: 20) {
-                        // SINGLE BUTTON - either pause or play
                         Button(action: {
                             togglePause(activeEvent: activeEvent, sleepEvent: sleepEvent)
                         }) {
@@ -45,16 +47,9 @@ struct NowFocusView: View {
                                     .fill(Color.blue.opacity(0.2))
                                     .frame(width: 60, height: 60)
                                 
-                                // Only one icon should be visible
-                                if localIsPaused {
-                                    Image(systemName: "play.fill")
-                                        .font(.title2)
-                                        .foregroundColor(.blue)
-                                } else {
-                                    Image(systemName: "pause.fill")
-                                        .font(.title2)
-                                        .foregroundColor(.blue)
-                                }
+                                Image(systemName: sleepEvent.isPaused ? "play.fill" : "pause.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.blue)
                             }
                         }
                         
@@ -75,14 +70,37 @@ struct NowFocusView: View {
                 }
                 .padding()
                 .onAppear {
-                    print("NowFocusView appeared with activeEvent")
-                    // Initialize our local state from the model
-                    localIsPaused = activeEvent.isPaused
+                    //print("NowFocusView appeared with activeEvent")
+                    // Initialize state
+                    localIsPaused = sleepEvent.isPaused
                     updateDisplayTime(sleepEvent: sleepEvent)
                     
-                    // Only start timer if not paused
-                    if !localIsPaused {
-                        startTimer(sleepEvent: sleepEvent)
+                    // Listen for pause state changes
+                    NotificationCenter.default.addObserver(
+                        forName: NSNotification.Name("NapPauseStateChanged"),
+                        object: nil,
+                        queue: .main
+                    ) { notification in
+                        if let eventId = notification.object as? UUID,
+                           eventId == activeEvent.id,
+                           let updatedSleepEvent = dataStore.getSleepEvent(id: activeEvent.id, for: date) {
+                            // Update our local state
+                            localIsPaused = updatedSleepEvent.isPaused
+                            //print("NowFocusView received pause change: isPaused=\(localIsPaused)")
+                            
+                            // Update duration immediately and force refresh
+                            updateDisplayTime(sleepEvent: updatedSleepEvent)
+                            timerID = UUID()
+                        }
+                    }
+                }
+                .onDisappear {
+                    NotificationCenter.default.removeObserver(self)
+                }
+                .onReceive(timerManager.$timerTick) { _ in
+                    // Update the display time when the shared timer ticks
+                    if let updatedSleepEvent = dataStore.getSleepEvent(id: activeEvent.id, for: date) {
+                        updateDisplayTime(sleepEvent: updatedSleepEvent)
                     }
                 }
                 
@@ -90,8 +108,11 @@ struct NowFocusView: View {
                 // Show the next upcoming event when no active event and it's today
                 NextEventInfoView(date: date)
                     .environmentObject(dataStore)
+            } else if isPastDate(date) {
+                // For past dates, show a message
+                PastDateView(date: date)
             } else {
-                // Show daily summary for future dates
+                // Show daily summary for future dates only
                 FutureDateSummaryView(date: date)
                     .environmentObject(dataStore)
             }
@@ -105,172 +126,173 @@ struct NowFocusView: View {
             // When active event changes, update our local state
             if let newEvent = newActiveEvent,
                let sleepEvent = dataStore.getSleepEvent(id: newEvent.id, for: date) {
-                localIsPaused = newEvent.isPaused
+                localIsPaused = sleepEvent.isPaused
                 updateDisplayTime(sleepEvent: sleepEvent)
                 
-                // Manage timer based on pause state
-                if localIsPaused {
-                    stopTimer()
-                } else {
-                    startTimer(sleepEvent: sleepEvent)
-                }
-            } else {
-                // No active event, stop timer
-                stopTimer()
+                // Force view refresh when active event changes
+                timerID = UUID()
             }
         }
-        .onDisappear {
-            stopTimer()
-        }
     }
     
-    private func startTimer(sleepEvent: SleepEvent) {
-        // Stop any existing timer first
-        stopTimer()
-        
-        print("Starting nap timer")
-        localTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            updateDisplayTime(sleepEvent: sleepEvent)
-        }
-    }
-    
-    private func stopTimer() {
-        if localTimer != nil {
-            print("Stopping nap timer")
-            localTimer?.invalidate()
-            localTimer = nil
-        }
+    private func isPastDate(_ date: Date) -> Bool {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let checkDate = calendar.startOfDay(for: date)
+        return checkDate < today
     }
     
     private func updateDisplayTime(sleepEvent: SleepEvent) {
-        let elapsedTime = calculateElapsedTime(sleepEvent: sleepEvent)
+        // Use the shared manager to calculate elapsed time
+        let elapsedTime = timerManager.calculateEffectiveDuration(sleepEvent: sleepEvent)
         
-        let hours = Int(elapsedTime) / 3600
-        let minutes = (Int(elapsedTime) % 3600) / 60
-        let seconds = Int(elapsedTime) % 60
-        
-        if hours > 0 {
-            displayTime = String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            displayTime = String(format: "%02d:%02d", minutes, seconds)
-        }
-    }
-    
-    private func calculateElapsedTime(sleepEvent: SleepEvent) -> TimeInterval {
-        let now = Date()
-        var totalPauseTime: TimeInterval = 0
-        
-        // Calculate total pause time from completed intervals
-        for interval in sleepEvent.pauseIntervals {
-            totalPauseTime += interval.resumeTime.timeIntervalSince(interval.pauseTime)
+        // Update the actual sleep duration in the data store periodically
+        if !sleepEvent.isPaused && sleepEvent.isOngoing {
+            var modifiedSleepEvent = sleepEvent
+            modifiedSleepEvent.actualSleepDuration = elapsedTime
+            // TODO: Maybe not most efficient thinng to be doing; saving every second to datastore.
+            dataStore.updateSleepEvent(modifiedSleepEvent, for: date)
         }
         
-        // If currently paused, add the current pause interval
-        if localIsPaused, let pauseTime = sleepEvent.lastPauseTime {
-            totalPauseTime += now.timeIntervalSince(pauseTime)
-        }
+        // Use the shared manager to format the time consistently
+        let newDisplayTime = timerManager.formatDuration(elapsedTime)
         
-        // Calculate total elapsed time
-        return now.timeIntervalSince(sleepEvent.date) - totalPauseTime
+        if newDisplayTime != displayTime {
+            displayTime = newDisplayTime
+            // Force refresh of the display when time changes
+            timerID = UUID()
+        }
     }
     
     private func togglePause(activeEvent: ActiveEvent, sleepEvent: SleepEvent) {
-        // Toggle our local state first
-        localIsPaused = !localIsPaused
-        print("Toggling pause state to: \(localIsPaused)")
-        
-        // Update timer immediately based on new state
-        if localIsPaused {
-            stopTimer()
-        } else {
-            startTimer(sleepEvent: sleepEvent)
+        // Get the latest version of the sleep event
+        guard let updatedSleepEvent = dataStore.getSleepEvent(id: sleepEvent.id, for: date) else {
+            return
         }
+        
+        // Toggle the pause state
+        let newPauseState = !updatedSleepEvent.isPaused
+        print("Toggling pause state to: \(newPauseState)")
         
         // Now update the model with the new state
         let now = Date()
-        var updatedActiveEvent = activeEvent
-        var updatedSleepEvent = sleepEvent
+        var modifiedActiveEvent = activeEvent
+        var modifiedSleepEvent = updatedSleepEvent
         
-        if localIsPaused {
+        // Calculate the current elapsed time before changing pause state
+        let currentElapsedTime = timerManager.calculateEffectiveDuration(sleepEvent: updatedSleepEvent)
+        
+        if newPauseState {
             // Pausing
-            updatedActiveEvent.isPaused = true
-            updatedActiveEvent.lastPauseTime = now
+            modifiedActiveEvent.isPaused = true
+            modifiedActiveEvent.lastPauseTime = now
             
-            updatedSleepEvent.isPaused = true
-            updatedSleepEvent.lastPauseTime = now
+            modifiedSleepEvent.isPaused = true
+            modifiedSleepEvent.lastPauseTime = now
+            
+            // When pausing, save the current elapsed time as the actual sleep duration
+            modifiedSleepEvent.actualSleepDuration = currentElapsedTime
             
             // Haptic feedback for pause
             let generator = UIImpactFeedbackGenerator(style: .medium)
             generator.impactOccurred()
         } else {
             // Resuming
-            if let pauseTime = activeEvent.lastPauseTime {
+            if let pauseTime = updatedSleepEvent.lastPauseTime {
                 let newInterval = PauseInterval(pauseTime: pauseTime, resumeTime: now)
                 
-                updatedActiveEvent.pauseIntervals.append(newInterval)
-                updatedSleepEvent.pauseIntervals.append(newInterval)
+                modifiedActiveEvent.pauseIntervals.append(newInterval)
+                modifiedSleepEvent.pauseIntervals.append(newInterval)
             }
             
-            updatedActiveEvent.isPaused = false
-            updatedActiveEvent.lastPauseTime = nil
+            modifiedActiveEvent.isPaused = false
+            modifiedActiveEvent.lastPauseTime = nil
             
-            updatedSleepEvent.isPaused = false
-            updatedSleepEvent.lastPauseTime = nil
+            modifiedSleepEvent.isPaused = false
+            modifiedSleepEvent.lastPauseTime = nil
             
             // Haptic feedback for resume
             let generator = UIImpactFeedbackGenerator(style: .light)
             generator.impactOccurred()
         }
         
-        // Update the data store and active event
-        updatedSleepEvent.actualSleepDuration = calculateElapsedTime(sleepEvent: sleepEvent)
-        dataStore.updateSleepEvent(updatedSleepEvent, for: date)
+        // Update the data store first
+        dataStore.updateSleepEvent(modifiedSleepEvent, for: date)
         
-        // Very important - replace the entire activeEvent object
-        currentActiveEvent = updatedActiveEvent
+        // Then update the active event binding
+        currentActiveEvent = modifiedActiveEvent
+        
+        // Force a complete view refresh by generating a new timer ID
+        timerID = UUID()
         
         // Force an immediate update of the display time
-        updateDisplayTime(sleepEvent: updatedSleepEvent)
+        updateDisplayTime(sleepEvent: modifiedSleepEvent)
         
         // Notify other components of the change
         NotificationCenter.default.post(
             name: NSNotification.Name("NapPauseStateChanged"),
-            object: updatedSleepEvent.id
+            object: modifiedSleepEvent.id
         )
     }
     
     private func stopNap(activeEvent: ActiveEvent, sleepEvent: SleepEvent) {
-        var updatedSleepEvent = sleepEvent
+        // Get the latest version of the sleep event
+        guard let updatedSleepEvent = dataStore.getSleepEvent(id: sleepEvent.id, for: date) else {
+            return
+        }
+        
+        var modifiedSleepEvent = updatedSleepEvent
         
         // Set the end time to now
         let now = Date()
-        updatedSleepEvent.endTime = now
+        modifiedSleepEvent.endTime = now
         
-        // Save actual sleep duration
-        updatedSleepEvent.actualSleepDuration = calculateElapsedTime(sleepEvent: sleepEvent)
+        // CRITICAL FIX: Save the EXACT duration that's currently displayed in the timer
+        // This is the value shown to the user and must be preserved exactly
+        
+        // Calculate the current effective duration using the shared timer manager
+        let displayedDuration = timerManager.calculateEffectiveDuration(sleepEvent: updatedSleepEvent)
+        
+        // Force log the exact duration we're saving
+        //print("SAVING EXACT TIMER DURATION: \(formatDuration(displayedDuration))")
+        
+        // Explicitly set this duration as the actual sleep duration
+        modifiedSleepEvent.actualSleepDuration = displayedDuration
         
         // Save pause intervals for record-keeping
-        updatedSleepEvent.pauseIntervals = activeEvent.pauseIntervals
+        modifiedSleepEvent.pauseIntervals = activeEvent.pauseIntervals
         
         // Mark as no longer ongoing
-        updatedSleepEvent.isOngoing = false
-        updatedSleepEvent.isPaused = false
-        updatedSleepEvent.lastPauseTime = nil
+        modifiedSleepEvent.isOngoing = false
+        modifiedSleepEvent.isPaused = false
+        modifiedSleepEvent.lastPauseTime = nil
         
-        // Stop our timer
-        stopTimer()
+        // Update the data store - do this AFTER setting all properties
+        dataStore.updateSleepEvent(modifiedSleepEvent, for: date)
         
-        // Update the data store
-        dataStore.updateSleepEvent(updatedSleepEvent, for: date)
-        
-        // Print debug info
-        print("Stopped nap event: \(updatedSleepEvent.id)")
+        // Verify the data was saved correctly by retrieving it again
+        if let verifiedEvent = dataStore.getSleepEvent(id: sleepEvent.id, for: date) {
+            //print("VERIFICATION - Saved duration: \(formatDuration(verifiedEvent.actualSleepDuration ?? 0))")
+        }
         
         // Post notification to update UI
-        NotificationCenter.default.post(name: NSNotification.Name("NapStopped"), object: updatedSleepEvent.id)
+        NotificationCenter.default.post(name: NSNotification.Name("NapStopped"), object: modifiedSleepEvent.id)
         
         // Clear the active event
         currentActiveEvent = nil
+    }
+    
+    // Helper function to format duration for logging
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let hours = Int(duration) / 3600
+        let minutes = (Int(duration) % 3600) / 60
+        let seconds = Int(duration) % 60
+        
+        if hours > 0 {
+            return String(format: "%dh %dm %ds", hours, minutes, seconds)
+        } else {
+            return String(format: "%dm %ds", minutes, seconds)
+        }
     }
     
     private func isAfterBedtime() -> Bool {
@@ -292,6 +314,41 @@ struct NowFocusView: View {
         let bedMinutes = (bedComponents.hour ?? 0) * 60 + (bedComponents.minute ?? 0)
         
         return nowMinutes >= bedMinutes
+    }
+}
+
+struct PastDateView: View {
+    let date: Date
+    
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.system(size: 40))
+                .foregroundColor(.gray)
+            
+            Text("Past Date")
+                .font(.headline)
+                .foregroundColor(.gray)
+            
+            Text(formattedDate())
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            Text("View historical data only")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.top, 5)
+        }
+        .padding()
+        .background(Color(UIColor.systemBackground).opacity(0.9))
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+    }
+    
+    private func formattedDate() -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        return formatter.string(from: date)
     }
 }
 
@@ -374,7 +431,7 @@ struct NextEventInfoView: View {
                 object: nil,
                 queue: .main
             ) { _ in
-                print("Received EventDataChanged notification - refreshing next event view")
+                //print("Received EventDataChanged notification - refreshing next event view")
                 findNextEvent()
             }
             
@@ -479,16 +536,16 @@ struct NextEventInfoView: View {
             let timeDifference = abs(new.timeRemaining - current.timeRemaining)
             if new.event.id != current.event.id || timeDifference > 30 {
                 nextEvent = new
-                print("Updated next event: \(titleForEvent(new.event)) in \(formatTimeRemaining(new.timeRemaining))")
+                //print("Updated next event: \(titleForEvent(new.event)) in \(formatTimeRemaining(new.timeRemaining))")
             }
         } else {
             // Either we had no event before or we have none now
             nextEvent = newNextEvent
             
             if let next = nextEvent {
-                print("Found new next event: \(titleForEvent(next.event)) in \(formatTimeRemaining(next.timeRemaining))")
+                //print("Found new next event: \(titleForEvent(next.event)) in \(formatTimeRemaining(next.timeRemaining))")
             } else {
-                print("No upcoming events found")
+                //print("No upcoming events found")
             }
         }
     }
@@ -612,70 +669,53 @@ struct FutureDateSummaryView: View {
     @EnvironmentObject var dataStore: DataStore
     let date: Date
     
+    @State private var currentTab = 0
+    private let categories = ["Feed", "Sleep", "Tasks"]
+    
     var body: some View {
-        VStack(spacing: 15) {
+        VStack(spacing: 10) {
             Text("Plan for \(formattedDate())")
                 .font(.headline)
                 .foregroundColor(.gray)
             
-            HStack(spacing: 20) {
-                // Feed summary
-                VStack {
-                    Image(systemName: "cup.and.saucer.fill")
-                        .font(.title)
-                        .foregroundColor(.blue)
-                    
-                    Text("\(totalMilkVolume()) ml")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    
-                    Text("\(feedCount()) feeds")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(width: 80)
+            TabView(selection: $currentTab) {
+                // Feed summary card
+                FeedSummaryCard(date: date)
+                    .environmentObject(dataStore)
+                    .tag(0)
                 
-                // Sleep summary
-                VStack {
-                    Image(systemName: "moon.zzz.fill")
-                        .font(.title)
-                        .foregroundColor(.purple)
-                    
-                    Text("\(totalNapHours())")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    
-                    Text("\(napCount()) naps")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(width: 80)
+                // Sleep summary card
+                SleepSummaryCard(date: date)
+                    .environmentObject(dataStore)
+                    .tag(1)
                 
-                // Tasks summary (if implemented)
-                VStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title)
-                        .foregroundColor(.green)
-                    
-                    Text("\(taskCount())")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    
-                    Text("tasks")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(width: 80)
+                // Tasks summary card
+                TaskSummaryCard(date: date)
+                    .environmentObject(dataStore)
+                    .tag(2)
             }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+            .frame(height: 200)
             
-            // Show a tip based on recent data
+            // Custom page indicator
+            HStack(spacing: 8) {
+                ForEach(0..<categories.count, id: \.self) { index in
+                    Circle()
+                        .fill(currentTab == index ?
+                             (index == 0 ? Color.blue : index == 1 ? Color.purple : Color.green) :
+                             Color.gray.opacity(0.3))
+                        .frame(width: 8, height: 8)
+                }
+            }
+            .padding(.bottom, 5)
+            
+            // Daily tip below the carousel
             Text(getDailyTip())
                 .font(.subheadline)
                 .foregroundColor(.primary)
                 .padding()
                 .background(Color.blue.opacity(0.1))
                 .cornerRadius(8)
-                .padding(.top, 5)
         }
         .padding()
         .background(
@@ -689,6 +729,73 @@ struct FutureDateSummaryView: View {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return formatter.string(from: date)
+    }
+    
+    private func getDailyTip() -> String {
+        let tips = [
+            "Most babies need 12-16 hours of sleep in a 24-hour period",
+            "Try to keep nap times consistent each day",
+            "Babies typically take 2-4 naps per day, depending on age",
+            "A bedtime routine helps signal that it's time to sleep",
+            "Watch for sleep cues like rubbing eyes or yawning",
+            "Cooler room temperatures (68-72°F) can help improve sleep",
+            "Try to put baby down drowsy but still awake",
+            "Short naps (20-30 min) might indicate overtiredness"
+        ]
+        
+        // Select a tip based on date to ensure consistency
+        let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: date) ?? 0
+        return tips[dayOfYear % tips.count]
+    }
+}
+
+// Feed Summary Card
+struct FeedSummaryCard: View {
+    @EnvironmentObject var dataStore: DataStore
+    let date: Date
+    
+    var body: some View {
+        VStack {
+            Image(systemName: "cup.and.saucer.fill")
+                .font(.system(size: 32))
+                .foregroundColor(.blue)
+                .padding(.bottom, 5)
+            
+            Text("\(totalMilkVolume()) ml")
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+            
+            Text("\(feedCount()) feeds")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            HStack(spacing: 15) {
+                VStack {
+                    Text("Avg. per feed")
+                    Text("\(avgPerFeed()) ml")
+                        .fontWeight(.medium)
+                }
+                .font(.caption)
+                .padding(.top, 5)
+                
+                Divider()
+                    .frame(height: 30)
+                
+                VStack {
+                    Text("Schedule")
+                    Text("Every \(feedInterval()) hrs")
+                        .fontWeight(.medium)
+                }
+                .font(.caption)
+                .padding(.top, 5)
+            }
+            .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.blue.opacity(0.1))
+        .cornerRadius(16)
     }
     
     private func totalMilkVolume() -> Int {
@@ -721,60 +828,33 @@ struct FutureDateSummaryView: View {
         return feedEvents.count
     }
     
-    private func napCount() -> Int {
-        let events = dataStore.getEvents(for: date)
-        let napEvents = events.filter {
-            if $0.type == .sleep,
-               let sleepEvent = dataStore.getSleepEvent(id: $0.id, for: date),
-               sleepEvent.sleepType == .nap {
-                return true
-            }
-            return false
-        }
-        
-        // If we have no data for this day yet, predict from previous patterns
-        if napEvents.isEmpty {
-            return predictNapCount()
-        }
-        
-        return napEvents.count
+    private func avgPerFeed() -> Int {
+        let total = Double(totalMilkVolume())
+        let count = Double(feedCount())
+        guard count > 0 else { return 0 }
+        return Int(total / count)
     }
     
-    private func totalNapHours() -> String {
-        let events = dataStore.getEvents(for: date)
-        var totalMinutes: Double = 0
+    private func feedInterval() -> String {
+        let wakeComponents = Calendar.current.dateComponents([.hour, .minute], from: dataStore.baby.wakeTime)
+        let bedComponents = Calendar.current.dateComponents([.hour, .minute], from: dataStore.baby.bedTime)
         
-        for event in events where event.type == .sleep {
-            if let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date),
-               sleepEvent.sleepType == .nap {
-                // Calculate the duration of the nap
-                let duration = sleepEvent.endTime.timeIntervalSince(sleepEvent.date) / 60 // in minutes
-                totalMinutes += duration
-            }
-        }
+        let wakeHour = wakeComponents.hour ?? 7
+        let bedHour = bedComponents.hour ?? 19
         
-        // If we have no data for this day yet, predict from previous patterns
-        if totalMinutes == 0 {
-            totalMinutes = predictTotalNapMinutes()
-        }
+        // Calculate awake hours
+        var awakeHours = bedHour - wakeHour
+        if awakeHours < 0 { awakeHours += 24 }
         
-        // Convert to hours and format
-        let hours = Int(totalMinutes / 60)
-        let minutes = Int(totalMinutes.truncatingRemainder(dividingBy: 60))
+        let count = Double(feedCount())
+        guard count > 1 else { return "3" }
         
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        } else {
-            return "\(minutes)m"
-        }
+        // Calculate average interval between feeds
+        let interval = Double(awakeHours) / (count - 1)
+        return String(format: "%.1f", interval)
     }
     
-    private func taskCount() -> Int {
-        let events = dataStore.getEvents(for: date)
-        return events.filter { $0.type == .task }.count
-    }
-    
-    // Prediction functions
+    // Prediction methods
     private func predictTotalMilkVolume() -> Double {
         let calendar = Calendar.current
         var total: Double = 0
@@ -824,7 +904,157 @@ struct FutureDateSummaryView: View {
         // Return average, or default value if no data
         return days > 0 ? Int(round(Double(total) / Double(days))) : 5
     }
+}
+
+// Sleep Summary Card
+struct SleepSummaryCard: View {
+    @EnvironmentObject var dataStore: DataStore
+    let date: Date
     
+    var body: some View {
+        VStack {
+            Image(systemName: "moon.zzz.fill")
+                .font(.system(size: 32))
+                .foregroundColor(.purple)
+                .padding(.bottom, 5)
+            
+            Text(totalNapHours())
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+            
+            Text("\(napCount()) naps")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            HStack(spacing: 15) {
+                VStack {
+                    Text("Avg. nap length")
+                    Text(averageNapDuration())
+                        .fontWeight(.medium)
+                }
+                .font(.caption)
+                .padding(.top, 5)
+                
+                Divider()
+                    .frame(height: 30)
+                
+                VStack {
+                    Text("Next nap")
+                    Text(nextNapTime())
+                        .fontWeight(.medium)
+                }
+                .font(.caption)
+                .padding(.top, 5)
+            }
+            .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.purple.opacity(0.1))
+        .cornerRadius(16)
+    }
+    
+    private func napCount() -> Int {
+        let events = dataStore.getEvents(for: date)
+        let napEvents = events.filter {
+            if $0.type == .sleep,
+               let sleepEvent = dataStore.getSleepEvent(id: $0.id, for: date),
+               sleepEvent.sleepType == .nap {
+                return true
+            }
+            return false
+        }
+        
+        // If we have no data for this day yet, predict from previous patterns
+        if napEvents.isEmpty {
+            return predictNapCount()
+        }
+        
+        return napEvents.count
+    }
+    
+    private func totalNapMinutes() -> Double {
+        let events = dataStore.getEvents(for: date)
+        var totalMinutes: Double = 0
+        
+        for event in events where event.type == .sleep {
+            if let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date),
+               sleepEvent.sleepType == .nap {
+                // Calculate the duration of the nap
+                let duration = sleepEvent.endTime.timeIntervalSince(sleepEvent.date) / 60 // in minutes
+                totalMinutes += duration
+            }
+        }
+        
+        // If we have no data for this day yet, predict from previous patterns
+        if totalMinutes == 0 {
+            totalMinutes = predictTotalNapMinutes()
+        }
+        
+        return totalMinutes
+    }
+    
+    private func totalNapHours() -> String {
+        let totalMinutes = totalNapMinutes()
+        
+        // Convert to hours and format
+        let hours = Int(totalMinutes / 60)
+        let minutes = Int(totalMinutes.truncatingRemainder(dividingBy: 60))
+        
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        } else {
+            return "\(minutes)m"
+        }
+    }
+    
+    private func averageNapDuration() -> String {
+        let totalMins = totalNapMinutes()
+        let count = Double(napCount())
+        
+        if count == 0 { return "30m" }
+        
+        let avgMinutes = totalMins / count
+        let hours = Int(avgMinutes / 60)
+        let minutes = Int(avgMinutes.truncatingRemainder(dividingBy: 60))
+        
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        } else {
+            return "\(minutes)m"
+        }
+    }
+    
+    private func nextNapTime() -> String {
+        // Only applicable for today or future days
+        if Calendar.current.isDateInToday(date) || date > Date() {
+            let events = dataStore.getEvents(for: date)
+            let now = Date()
+            
+            // Find the next nap after current time
+            let upcomingNaps = events.filter {
+                if $0.type == .sleep,
+                   let sleepEvent = dataStore.getSleepEvent(id: $0.id, for: date),
+                   sleepEvent.sleepType == .nap,
+                   sleepEvent.date > now,
+                   !sleepEvent.isOngoing {
+                    return true
+                }
+                return false
+            }.sorted { $0.date < $1.date }
+            
+            if let nextNap = upcomingNaps.first {
+                let formatter = DateFormatter()
+                formatter.timeStyle = .short
+                return formatter.string(from: nextNap.date)
+            }
+        }
+        
+        return "N/A"
+    }
+    
+    // Prediction methods
     private func predictNapCount() -> Int {
         let calendar = Calendar.current
         var total = 0
@@ -883,22 +1113,115 @@ struct FutureDateSummaryView: View {
         // Return average, or default value if no data
         return days > 0 ? totalMinutes / Double(days) : 180 // Default to 3 hours
     }
+}
+
+// Tasks Summary Card
+struct TaskSummaryCard: View {
+    @EnvironmentObject var dataStore: DataStore
+    let date: Date
     
-    private func getDailyTip() -> String {
-        let tips = [
-            "Most babies need 12-16 hours of sleep in a 24-hour period",
-            "Try to keep nap times consistent each day",
-            "Babies typically take 2-4 naps per day, depending on age",
-            "A bedtime routine helps signal that it's time to sleep",
-            "Watch for sleep cues like rubbing eyes or yawning",
-            "Cooler room temperatures (68-72°F) can help improve sleep",
-            "Try to put baby down drowsy but still awake",
-            "Short naps (20-30 min) might indicate overtiredness"
-        ]
+    var body: some View {
+        VStack {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 32))
+                .foregroundColor(.green)
+                .padding(.bottom, 5)
+            
+            Text("\(taskCount()) tasks")
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+            
+            Text("\(completedTaskCount()) completed")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            HStack(spacing: 15) {
+                VStack {
+                    Text("High priority")
+                    Text("\(highPriorityCount())")
+                        .fontWeight(.medium)
+                }
+                .font(.caption)
+                .padding(.top, 5)
+                
+                Divider()
+                    .frame(height: 30)
+                
+                VStack {
+                    Text("Next task")
+                    Text(nextTaskTime())
+                        .fontWeight(.medium)
+                }
+                .font(.caption)
+                .padding(.top, 5)
+            }
+            .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.green.opacity(0.1))
+        .cornerRadius(16)
+    }
+    
+    private func taskCount() -> Int {
+        let events = dataStore.getEvents(for: date)
+        return events.filter { $0.type == .task }.count
+    }
+    
+    private func completedTaskCount() -> Int {
+        let events = dataStore.getEvents(for: date).filter { $0.type == .task }
+        var completedCount = 0
         
-        // Select a tip based on date to ensure consistency
-        let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: date) ?? 0
-        return tips[dayOfYear % tips.count]
+        for event in events {
+            if let taskEvent = dataStore.getTaskEvent(id: event.id, for: date),
+               taskEvent.completed {
+                completedCount += 1
+            }
+        }
+        
+        return completedCount
+    }
+    
+    private func highPriorityCount() -> Int {
+        let events = dataStore.getEvents(for: date).filter { $0.type == .task }
+        var highPriorityCount = 0
+        
+        for event in events {
+            if let taskEvent = dataStore.getTaskEvent(id: event.id, for: date),
+               taskEvent.priority == .high {
+                highPriorityCount += 1
+            }
+        }
+        
+        return highPriorityCount
+    }
+    
+    private func nextTaskTime() -> String {
+        // Only applicable for today or future days
+        if Calendar.current.isDateInToday(date) || date > Date() {
+            let events = dataStore.getEvents(for: date)
+            let now = Date()
+            
+            // Find the next task after current time that's not completed
+            let upcomingTasks = events.filter {
+                if $0.type == .task,
+                   let taskEvent = dataStore.getTaskEvent(id: $0.id, for: date),
+                   taskEvent.date > now,
+                   !taskEvent.completed {
+                    return true
+                }
+                return false
+            }.sorted { $0.date < $1.date }
+            
+            if let nextTask = upcomingTasks.first {
+                let formatter = DateFormatter()
+                formatter.timeStyle = .short
+                return formatter.string(from: nextTask.date)
+            }
+        }
+        
+        return "N/A"
     }
 }
 
@@ -957,7 +1280,7 @@ struct NapControlsView: View {
         }
         .padding()
         .onAppear {
-            print("NapControlsView appeared with isPaused: \(isPaused)")
+            //print("NapControlsView appeared with isPaused: \(isPaused)")
             calculateElapsedTime()
             updateDisplayTime()
             
@@ -966,7 +1289,7 @@ struct NapControlsView: View {
             }
         }
         .onChange(of: isPaused) { _, newIsPaused in
-            print("NapControlsView isPaused changed to: \(newIsPaused)")
+            //print("NapControlsView isPaused changed to: \(newIsPaused)")
             
             if newIsPaused {
                 // Always stop timer when paused
@@ -989,7 +1312,7 @@ struct NapControlsView: View {
         // ALWAYS stop existing timer before starting a new one
         stopTimer()
         
-        print("Starting timer")
+        //print("Starting timer")
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             calculateElapsedTime()
             updateDisplayTime()
@@ -998,7 +1321,7 @@ struct NapControlsView: View {
     
     private func stopTimer() {
         if timer != nil {
-            print("Stopping timer")
+            //print("Stopping timer")
             timer?.invalidate()
             timer = nil
         }
