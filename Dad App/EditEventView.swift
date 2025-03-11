@@ -67,18 +67,10 @@ struct EditEventView: View {
             .background(Color(.systemBackground))
             .cornerRadius(16)
             .shadow(radius: 10)
-            //.offset(y: offset)
             .edgesIgnoringSafeArea(.all)
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("DismissEditView"))) { _ in
                 presentationMode.wrappedValue.dismiss()
             }
-        }
-        .onAppear {
-            // Animate the form sliding up when it appears
-            //offset = UIScreen.main.bounds.height
-            //withAnimation(.easeOut(duration: 0.3)) {
-                //offset = 0
-            //}
         }
     }
 }

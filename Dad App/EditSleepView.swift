@@ -165,17 +165,6 @@ struct EditSleepView: View {
             }
             .padding()
         }
-        /*
-        .alert(isPresented: $showDeleteConfirmation) {
-            Alert(
-                title: Text("Delete Event"),
-                //message: Text("Are you sure you want to delete this sleep event?"),
-                primaryButton: .destructive(Text("Delete")) {
-                    deleteEvent()
-                },
-                secondaryButton: .cancel()
-            )
-        }*/
         .alert(isPresented: $showSaveAsPermanentAlert) {
             Alert(
                 title: Text("Save Default Time"),

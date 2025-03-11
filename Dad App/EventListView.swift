@@ -33,7 +33,7 @@ struct EventListView: View {
                         .onTapGesture {
                             selectedEvent = event
                         }
-                        // Add a more stable ID that doesn't change with every timer update
+                    // Add a more stable ID that doesn't change with every timer update
                         .id("event-row-\(event.id)")
                 }
             }

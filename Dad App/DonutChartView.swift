@@ -283,7 +283,7 @@ struct DonutChartView: View {
                 }()
                 
                 // Now create the actual view elements
-        Group {
+                Group {
                     // The main capsule body
                     ZStack {
                         TaskArcCapsule(
@@ -384,16 +384,16 @@ struct DonutChartView: View {
                 Group {
                     // The main capsule body
                     ZStack {
-                    SleepArcCapsule(
-                        startAngle: angleForTime(displayStartTime),
-                        endAngle: angleForTime(displayEndTime),
-                        donutWidth: donutWidth * 0.8,
+                        SleepArcCapsule(
+                            startAngle: angleForTime(displayStartTime),
+                            endAngle: angleForTime(displayEndTime),
+                            donutWidth: donutWidth * 0.8,
                             color: colorForEvent(event),
                             isOngoing: isOngoing,
                             isPaused: isPaused
-                    )
-                    .shadow(radius: isEventInvolved ? 4 : 0)
-                    
+                        )
+                        .shadow(radius: isEventInvolved ? 4 : 0)
+                        
                         // Add a status indicator for ongoing naps in the middle of the arc
                         if isOngoing {
                             let middleAngle = (angleForTime(displayStartTime) + angleForTime(displayEndTime)) / 2
@@ -419,11 +419,11 @@ struct DonutChartView: View {
                         )
                         .position(pointOnDonutCenter(angle: angleForTime(displayEndTime), geometry: geometry))
                     } else {
-                    Circle()
-                        .fill(colorForEvent(event))
-                        .frame(width: donutWidth * 0.8, height: donutWidth * 0.8)
-                        .position(pointOnDonutCenter(angle: angleForTime(displayEndTime), geometry: geometry))
-                }
+                        Circle()
+                            .fill(colorForEvent(event))
+                            .frame(width: donutWidth * 0.8, height: donutWidth * 0.8)
+                            .position(pointOnDonutCenter(angle: angleForTime(displayEndTime), geometry: geometry))
+                    }
                 }
                 // Only apply drag gesture for non-ongoing naps
                 .gesture(
@@ -431,12 +431,12 @@ struct DonutChartView: View {
                     DragGesture()
                         .onChanged { value in
                             if !isOngoing {
-                            handleSleepEventDragChange(value: value, event: event, sleepEvent: sleepEvent, geometry: geometry)
+                                handleSleepEventDragChange(value: value, event: event, sleepEvent: sleepEvent, geometry: geometry)
                             }
                         }
                         .onEnded { value in
                             if !isOngoing {
-                            handleSleepEventDragEnd(value: value, event: event)
+                                handleSleepEventDragEnd(value: value, event: event)
                             }
                         }
                 )
@@ -674,7 +674,7 @@ struct DonutChartView: View {
         let validEndTime = calendar.date(from: finalEndComponents) ?? endTime
         
         /*print("Validated: Start: \(calendar.dateComponents([.hour, .minute], from: validStartTime).hour ?? 0):\(calendar.dateComponents([.hour, .minute], from: validStartTime).minute ?? 0), End: \(calendar.dateComponents([.hour, .minute], from: validEndTime).hour ?? 0):\(calendar.dateComponents([.hour, .minute], from: validEndTime).minute ?? 0)")
-        */
+         */
         return (validStartTime, validEndTime)
     }
     
@@ -732,7 +732,7 @@ struct DonutChartView: View {
         }) { event in
             taskEventView(event: event, geometry: geometry)
                 .id("task-\(event.id)-\(refreshTrigger)") // Force refresh when trigger changes
-            }
+        }
     }
     
     private func specialEventsView(geometry: GeometryProxy) -> some View {
@@ -774,7 +774,7 @@ struct DonutChartView: View {
                         }
                     }
                 }
-                        }
+        }
         .id("specialEvents-\(refreshTrigger)")
     }
     
@@ -918,15 +918,15 @@ struct DonutChartView: View {
                 ForEach(markers, id: \.self) { hourValue in
                     // Create a date for this hour
                     if let hourDate = createDateForHour(hourValue) {
-                    let angle = angleForTime(hourDate)
-                    
+                        let angle = angleForTime(hourDate)
+                        
                         Text(formatHourLabel(hourValue))
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .position(pointOutsideDonut(angle: angle, geometry: geometry, offset: 20))
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                            .position(pointOutsideDonut(angle: angle, geometry: geometry, offset: 20))
+                    }
                 }
             }
-        }
                 .id(UUID()) // Force markers to rebuild each time
         )
     }
@@ -1119,7 +1119,7 @@ struct DonutChartView: View {
             // Don't allow any dragging of ongoing naps
             return
         }
-
+        
         // First drag begins - determine drag mode
         if !isDragging {
             // Store original times for whole sleep dragging
@@ -1538,9 +1538,9 @@ struct DonutChartView: View {
             if (normalizedAngle < normalizedStartAngle || normalizedAngle > normalizedEndAngle) {
                 // Out of bounds, constrain to closest end
                 let startDist = min(abs(normalizedAngle - normalizedStartAngle),
-                                  360 - abs(normalizedAngle - normalizedStartAngle))
+                                    360 - abs(normalizedAngle - normalizedStartAngle))
                 let endDist = min(abs(normalizedAngle - normalizedEndAngle),
-                                360 - abs(normalizedAngle - normalizedEndAngle))
+                                  360 - abs(normalizedAngle - normalizedEndAngle))
                 
                 return startDist < endDist ? arcStartAngle : arcEndAngle
             }
@@ -1549,9 +1549,9 @@ struct DonutChartView: View {
             if (normalizedAngle > normalizedEndAngle && normalizedAngle < normalizedStartAngle) {
                 // Out of bounds, constrain to closest end
                 let startDist = min(abs(normalizedAngle - normalizedStartAngle),
-                                  360 - abs(normalizedAngle - normalizedStartAngle))
+                                    360 - abs(normalizedAngle - normalizedStartAngle))
                 let endDist = min(abs(normalizedAngle - normalizedEndAngle),
-                                360 - abs(normalizedAngle - normalizedEndAngle))
+                                  360 - abs(normalizedAngle - normalizedEndAngle))
                 
                 return startDist < endDist ? arcStartAngle : arcEndAngle
             }
@@ -1641,8 +1641,8 @@ struct DonutChartView: View {
         
         // Handle case where bedtime is after midnight
         let totalWakingMinutes = bedTimeMinutes > wakeTimeMinutes
-            ? bedTimeMinutes - wakeTimeMinutes
-            : (24 * 60 - wakeTimeMinutes) + bedTimeMinutes
+        ? bedTimeMinutes - wakeTimeMinutes
+        : (24 * 60 - wakeTimeMinutes) + bedTimeMinutes
         
         // Calculate the total angle sweep of the arc
         let totalAngleSweep = (arcEndAngle - arcStartAngle + 360).truncatingRemainder(dividingBy: 360)
@@ -1765,8 +1765,8 @@ struct DonutChartView: View {
         
         // Handle case where bedtime is after midnight
         let totalWakingMinutes = bedTimeMinutes > wakeTimeMinutes
-            ? bedTimeMinutes - wakeTimeMinutes
-            : (24 * 60 - wakeTimeMinutes) + bedTimeMinutes
+        ? bedTimeMinutes - wakeTimeMinutes
+        : (24 * 60 - wakeTimeMinutes) + bedTimeMinutes
         
         let hourMinute = calendar.dateComponents([.hour, .minute], from: time)
         guard let hour = hourMinute.hour, let minute = hourMinute.minute else {
@@ -1980,7 +1980,7 @@ struct DonutChartView: View {
                     startTime: updatedSleepEvent.date,
                     endTime: updatedSleepEvent.endTime
                 )
-
+                
                 let finalUpdatedSleepEvent = SleepEvent(
                     id: updatedSleepEvent.id,
                     date: validStartDate,
@@ -2184,7 +2184,7 @@ struct DonutChartView: View {
             generator.impactOccurred()
         }
     }
-
+    
     private func updateTaskEventEndTime(_ event: Event, to newEndTime: Date) {
         if event.type == .task,
            let taskEvent = getTaskEventForDate(event) {
@@ -2244,7 +2244,7 @@ struct DonutChartView: View {
             generator.impactOccurred()
         }
     }
-
+    
     private func updateTaskEventWhole(_ event: Event, startTime: Date, endTime: Date) {
         if event.type == .task,
            let taskEvent = getTaskEventForDate(event) {
@@ -2473,10 +2473,12 @@ struct SleepArcCapsule: View {
                 .fill(isPaused ? color.opacity(0.5) : color)
                 
                 // Overlay for ongoing events
-                if isOngoing && !isPaused {
-                    /*OngoingEventOverlay(color: color)
-                        .frame(width: geometry.size.width, height: geometry.size.height)*/
-                }
+                /*
+                 if isOngoing && !isPaused {
+                 OngoingEventOverlay(color: color)
+                 .frame(width: geometry.size.width, height: geometry.size.height)
+                 }
+                 */
                 
                 // Overlay for paused events
                 if isPaused {
@@ -2539,61 +2541,61 @@ struct ArcCapsuleShape: Shape {
         var path = Path()
         let center = CGPoint(x: rect.width / 2, y: rect.height / 2)
         let radius = min(rect.width, rect.height) / 2
-                
-                // Calculate inner and outer radius
-                let innerRadius = radius - donutWidth / 2
-                let outerRadius = radius + donutWidth / 2
-                
-                // Convert angles to radians
-                let startRad = startAngle * .pi / 180
-                let endRad = endAngle * .pi / 180
-                
-                // Handle special case when angles complete a full circle
-                let isFullCircle = abs(endAngle - startAngle) >= 360
-                
-                if isFullCircle {
-                    // Draw a full circle
-                    path.addEllipse(in: CGRect(
-                        x: center.x - radius,
-                        y: center.y - radius,
-                        width: radius * 2,
-                        height: radius * 2
-                    ))
-                } else {
-                    // Calculate start and end points on inner and outer circles
-                    let startOuterX = center.x + outerRadius * cos(startRad)
-                    let startOuterY = center.y + outerRadius * sin(startRad)
-                    
-                    let endInnerX = center.x + innerRadius * cos(endRad)
-                    let endInnerY = center.y + innerRadius * sin(endRad)
-                    
-                    // Move to start point on outer circle
-                    path.move(to: CGPoint(x: startOuterX, y: startOuterY))
-                    
-                    // Add arc along outer circle
-                    path.addArc(
-                        center: center,
-                        radius: outerRadius,
-                        startAngle: Angle(radians: startRad),
-                        endAngle: Angle(radians: endRad),
-                        clockwise: false
-                    )
-                    
-                    // Line to inner circle
-                    path.addLine(to: CGPoint(x: endInnerX, y: endInnerY))
-                    
-                    // Arc back along inner circle
-                    path.addArc(
-                        center: center,
-                        radius: innerRadius,
-                        startAngle: Angle(radians: endRad),
-                        endAngle: Angle(radians: startRad),
-                        clockwise: true
-                    )
-                    
-                    // Close the path
-                    path.closeSubpath()
-                }
+        
+        // Calculate inner and outer radius
+        let innerRadius = radius - donutWidth / 2
+        let outerRadius = radius + donutWidth / 2
+        
+        // Convert angles to radians
+        let startRad = startAngle * .pi / 180
+        let endRad = endAngle * .pi / 180
+        
+        // Handle special case when angles complete a full circle
+        let isFullCircle = abs(endAngle - startAngle) >= 360
+        
+        if isFullCircle {
+            // Draw a full circle
+            path.addEllipse(in: CGRect(
+                x: center.x - radius,
+                y: center.y - radius,
+                width: radius * 2,
+                height: radius * 2
+            ))
+        } else {
+            // Calculate start and end points on inner and outer circles
+            let startOuterX = center.x + outerRadius * cos(startRad)
+            let startOuterY = center.y + outerRadius * sin(startRad)
+            
+            let endInnerX = center.x + innerRadius * cos(endRad)
+            let endInnerY = center.y + innerRadius * sin(endRad)
+            
+            // Move to start point on outer circle
+            path.move(to: CGPoint(x: startOuterX, y: startOuterY))
+            
+            // Add arc along outer circle
+            path.addArc(
+                center: center,
+                radius: outerRadius,
+                startAngle: Angle(radians: startRad),
+                endAngle: Angle(radians: endRad),
+                clockwise: false
+            )
+            
+            // Line to inner circle
+            path.addLine(to: CGPoint(x: endInnerX, y: endInnerY))
+            
+            // Arc back along inner circle
+            path.addArc(
+                center: center,
+                radius: innerRadius,
+                startAngle: Angle(radians: endRad),
+                endAngle: Angle(radians: startRad),
+                clockwise: true
+            )
+            
+            // Close the path
+            path.closeSubpath()
+        }
         
         return path
     }
@@ -2853,64 +2855,6 @@ struct ArcStroke: View {
         }
     }
 }
-
-/*
-// A stroke style for the arc with customizable width
-struct ArcStroke: View {
-    var startAngle: Double
-    var endAngle: Double
-    var clockwise: Bool
-    var lineWidth: CGFloat
-    var color: Color
-    var onDoubleTap: ((Double) -> Void)?  // Callback for double tap
-    
-    var body: some View {
-        GeometryReader { geometry in
-            Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
-                .stroke(color, lineWidth: lineWidth)
-                .contentShape(
-                    Arc(startAngle: .degrees(startAngle), endAngle: .degrees(endAngle), clockwise: clockwise)
-                        .stroke(lineWidth: lineWidth * 1.5)
-                )
-                .gesture(
-                    TapGesture(count: 2)
-                        .onEnded { _ in
-                            if let onDoubleTap = onDoubleTap {
-                                // Fix: Use DragGesture with minDistance: 0 to get the tap location
-                                // Since we can't get the tap location directly from TapGesture
-                                
-                                // Calculate approx center of arc for testing
-                                let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                                
-                                // Calculate a reasonable angle based on the arc midpoint
-                                // This is just a fallback; ideally we'd get the actual tap location
-                                let midpointAngle = (startAngle + endAngle) / 2
-                                
-                                // Log for debugging
-                                print("DOUBLE TAP detected - using arc midpoint angle: \(midpointAngle)")
-                                
-                                // Call the callback with the calculated angle
-                                onDoubleTap(midpointAngle)
-                            }
-                        }
-                )
-                // Add a secondary gesture for testing/debugging
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 0)
-                        .onEnded { value in
-                            // This won't interfere with the double tap but will log the position
-                            let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                            let dx = value.location.x - center.x
-                            let dy = value.location.y - center.y
-                            var angle = atan2(dy, dx) * 180 / .pi
-                            if angle < 0 { angle += 360 }
-                            
-                            print("TAP DEBUG: Location \(value.location), angle \(angle)")
-                        }
-                )
-        }
-    }
-}*/
 
 extension CGRect {
     var center: CGPoint {

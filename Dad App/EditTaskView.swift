@@ -51,7 +51,7 @@ struct EditTaskView: View {
                                 .background(Color(.systemBackground))
                             Spacer()
                         }
-                        .padding(.horizontal, -8),
+                            .padding(.horizontal, -8),
                         alignment: .topLeading
                     )
                 

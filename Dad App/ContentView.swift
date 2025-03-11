@@ -196,26 +196,6 @@ struct ContentView: View {
     }
 }
 
-/*
- struct SlideAnimationModifier: ViewModifier {
- @Binding var isPresented: Bool
- let offsetY: CGFloat
- 
- func body(content: Content) -> some View {
- content
- .offset(y: isPresented ? 0 : offsetY)
- .animation(.easeInOut(duration: 0.3), value: isPresented)
- }
- }*/
-/*
- extension View {
- func slideAnimation(isPresented: Binding<Bool>, offsetY: CGFloat = UIScreen.main.bounds.height) -> some View {
- self.modifier(SlideAnimationModifier(isPresented: isPresented, offsetY: offsetY))
- }
- 
- }
- */
-
 struct SecondaryNavBar: View {
     var onUndoTapped: () -> Void
     var onRedoTapped: () -> Void

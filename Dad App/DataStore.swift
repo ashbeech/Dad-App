@@ -125,7 +125,7 @@ class DataStore: ObservableObject {
         // Add this line to post a notification about the new event
         NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
     }
-
+    
     
     func addSleepEvent(_ event: SleepEvent, for date: Date) {
         let dateString = formatDate(date)
@@ -242,14 +242,14 @@ class DataStore: ObservableObject {
         let sleepEvents = self.sleepEvents[dateString] ?? []
         return sleepEvents.first(where: { $0.sleepType == .waketime })
     }
-
+    
     // Helper method to find the bedtime event for a given date
     func findBedtimeEvent(for date: Date) -> SleepEvent? {
         let dateString = formatDate(date)
         let sleepEvents = self.sleepEvents[dateString] ?? []
         return sleepEvents.first(where: { $0.sleepType == .bedtime })
     }
-
+    
     // Method to check if a nap should be automatically stopped due to bedtime
     func checkAndStopNapsAtBedtime() {
         let today = Date()
@@ -286,7 +286,7 @@ class DataStore: ObservableObject {
             }
         }
     }
-
+    
     // Method to validate event times to ensure they're within wake and bedtime
     func validateEventTimes(startTime: Date, endTime: Date, for date: Date) -> (Date, Date) {
         let calendar = Calendar.current
@@ -354,7 +354,7 @@ class DataStore: ObservableObject {
         
         return (validStartTime, validEndTime)
     }
-
+    
     // Timer to periodically check for naps that should be stopped at bedtime
     func setupBedtimeNapCheckTimer() {
         // Check every minute if it's bedtime and if we need to stop any ongoing naps
@@ -736,7 +736,7 @@ class DataStore: ObservableObject {
             ))
         }
     }
-
+    
     // Save current state for potential undo
     internal func saveCurrentStateForUndo(eventId: UUID, for date: Date) {
         let calendar = Calendar.current
@@ -1007,9 +1007,11 @@ class DataStore: ObservableObject {
                 sleepEvents[dateString] = currentSleepEvents
                 
                 // Add explicit log to track data saving
-                if let duration = actualDuration {
-                    print("DATA STORE: Saved sleep event with actual duration: \(formatDuration(duration))")
-                }
+                /*
+                 if let duration = actualDuration {
+                 print("DATA STORE: Saved sleep event with actual duration: \(formatDuration(duration))")
+                 }
+                 */
                 
                 // Update notification
                 NotificationManager.shared.cancelNotification(for: event.id)
@@ -1020,7 +1022,7 @@ class DataStore: ObservableObject {
             }
         }
     }
-
+    
     func updateTaskEvent(_ event: TaskEvent, for date: Date) {
         let dateString = formatDate(date)
         

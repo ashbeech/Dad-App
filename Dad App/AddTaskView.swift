@@ -69,7 +69,7 @@ struct AddTaskView: View {
                                 .background(Color(.systemBackground))
                             Spacer()
                         }
-                        .padding(.horizontal, -8),
+                            .padding(.horizontal, -8),
                         alignment: .topLeading
                     )
                 
@@ -188,7 +188,7 @@ struct AddTaskView: View {
         
         // If it's a template, add it to the baby's templates
         if isTemplate {
-            var updatedBaby = dataStore.baby
+            let updatedBaby = dataStore.baby
             // Add the task template (use a method to add task templates)
             // This would need to be implemented in the Baby model
             

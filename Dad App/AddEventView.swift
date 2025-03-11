@@ -76,9 +76,9 @@ struct AddEventView: View {
         }
         .onDisappear() {
             // Animate the form sliding up when it appears
-             withAnimation(.easeOut(duration: 0.3)) {
-                 offset = UIScreen.main.bounds.height
-             }
+            withAnimation(.easeOut(duration: 0.3)) {
+                offset = UIScreen.main.bounds.height
+            }
         }
     }
 }
