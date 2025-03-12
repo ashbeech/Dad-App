@@ -104,23 +104,21 @@ struct NowFocusView: View {
                     }
                 }
                 
-            } else if Calendar.current.isDateInToday(date) {
+            } else if Calendar.current.isDateInToday(date) && !isAfterBedtime() {
                 // Show the next upcoming event when no active event and it's today
                 NextEventInfoView(date: date)
                     .environmentObject(dataStore)
             } else if isPastDate(date) {
                 // For past dates, show a message
                 PastDateView(date: date)
+            } else if Calendar.current.isDateInToday(date) && isAfterBedtime() {
+                DayCompletionView()
             } else {
                 // Show daily summary for future dates only
                 FutureDateSummaryView(date: date)
                     .environmentObject(dataStore)
             }
             
-            // For dates after bedtime, show a completion message
-            if Calendar.current.isDateInToday(date) && isAfterBedtime() {
-                DayCompletionView()
-            }
         }
         .onChange(of: currentActiveEvent) { _, newActiveEvent in
             // When active event changes, update our local state
@@ -321,28 +319,39 @@ struct PastDateView: View {
     let date: Date
     
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 40))
-                .foregroundColor(.gray)
+        GeometryReader { geometry in
+            let diameter = min(geometry.size.width, geometry.size.height)
             
-            Text("Past Date")
-                .font(.headline)
-                .foregroundColor(.gray)
-            
-            Text(formattedDate())
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            
-            Text("View historical data only")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.top, 5)
+            ZStack {
+                Circle()
+                    .fill(Color(UIColor.systemBackground).opacity(0.9))
+                    .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                
+                VStack(spacing: 10) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: diameter * 0.15))
+                        .foregroundColor(.gray)
+                    
+                    Text("Past Date")
+                        .font(.headline)
+                        .foregroundColor(.gray)
+                    
+                    Text(formattedDate())
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    
+                    Text("View historical data only")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 5)
+                }
+                .padding()
+                .frame(width: diameter, height: diameter)
+                .clipShape(Circle()) // Ensure content stays in circle
+            }
+            .frame(width: diameter, height: diameter)
+            .position(x: geometry.size.width/2, y: geometry.size.height/2)
         }
-        .padding()
-        .background(Color(UIColor.systemBackground).opacity(0.9))
-        .cornerRadius(16)
-        .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
     
     private func formattedDate() -> String {
@@ -655,80 +664,364 @@ struct DayCompletionView: View {
                 .foregroundColor(.secondary)
         }
         .padding()
+        /*
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color.white.opacity(0.9))
                 .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
-        )
+        )             */
         .transition(.opacity)
     }
 }
 
-// New component for showing summaries for future dates
 struct FutureDateSummaryView: View {
     @EnvironmentObject var dataStore: DataStore
     let date: Date
-    
-    @State private var currentTab = 0
-    private let categories = ["Feed", "Sleep", "Tasks"]
+    @State private var currentPage: Int = 0
     
     var body: some View {
-        VStack(spacing: 10) {
-            Text("Plan for \(formattedDate())")
-                .font(.headline)
-                .foregroundColor(.gray)
+        GeometryReader { geometry in
+            let diameter = min(geometry.size.width, geometry.size.height)
             
-            TabView(selection: $currentTab) {
-                // Feed summary card
-                FeedSummaryCard(date: date)
-                    .environmentObject(dataStore)
-                    .tag(0)
+            ZStack {
+                // Circular background
+                Circle()
+                    .fill(Color(UIColor.systemBackground).opacity(0.9))
+                    .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
                 
-                // Sleep summary card
-                SleepSummaryCard(date: date)
-                    .environmentObject(dataStore)
-                    .tag(1)
-                
-                // Tasks summary card
-                TaskSummaryCard(date: date)
-                    .environmentObject(dataStore)
-                    .tag(2)
-            }
-            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
-            .frame(height: 200)
-            
-            // Custom page indicator
-            HStack(spacing: 8) {
-                ForEach(0..<categories.count, id: \.self) { index in
-                    Circle()
-                        .fill(currentTab == index ?
-                             (index == 0 ? Color.blue : index == 1 ? Color.purple : Color.green) :
-                             Color.gray.opacity(0.3))
-                        .frame(width: 8, height: 8)
+                // Content with clipping to ensure it stays in circle
+                VStack(spacing: 3) {
+                    /*
+                    Text("Plan")
+                        .font(.title3)
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    */
+                    // Horizontal pager (custom implementation)
+                    ZStack {
+                        // Only show the current page
+                        if currentPage == 0 {
+                            // Feed summary
+                            VStack {
+                                Image(systemName: "cup.and.saucer.fill")
+                                    .font(.system(size: diameter * 0.15))
+                                    .foregroundColor(.blue)
+                                
+                                Text("\(totalMilkVolume()) ml")
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                                
+                                Text("\(feedCount()) feeds")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 10)
+                            .frame(width: diameter * 0.7)
+                            .transition(.opacity)
+                        } else if currentPage == 1 {
+                            // Sleep summary
+                            VStack {
+                                Image(systemName: "moon.zzz.fill")
+                                    .font(.system(size: diameter * 0.15))
+                                    .foregroundColor(.purple)
+                                
+                                Text("\(totalNapHours())")
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                                
+                                Text("\(napCount()) naps")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 10)
+                            .frame(width: diameter * 0.7)
+                            .transition(.opacity)
+                        } else if currentPage == 2 {
+                            // Tasks summary
+                            VStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: diameter * 0.15))
+                                    .foregroundColor(.green)
+                                
+                                Text("\(taskCount())")
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                                
+                                Text("tasks")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 10)
+                            .frame(width: diameter * 0.7)
+                            .transition(.opacity)
+                        }
+                    }
+                    .animation(.easeInOut, value: currentPage)
+                    
+                    // Page indicators
+                    HStack(spacing: 12) {
+                        ForEach(0..<3) { i in
+                            Circle()
+                                .fill(currentPage == i ? Color.blue : Color.gray.opacity(0.3))
+                                .frame(width: 10, height: 10)
+                        }
+                    }
+                    .padding(.bottom, 3)
+                    
+                    /*
+                    // Daily tip
+                    Text(getDailyTip())
+                        .font(.footnote)
+                        .foregroundColor(.primary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.7)
+                        .padding(10)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(8)
+                        .padding(.horizontal, diameter * 0.05)
+                     */
                 }
+                .padding(diameter * 0.05)
+                .frame(width: diameter, height: diameter)
+                .clipShape(Circle()) // Essential: clip content to circular shape
             }
-            .padding(.bottom, 5)
-            
-            // Daily tip below the carousel
-            Text(getDailyTip())
-                .font(.subheadline)
-                .foregroundColor(.primary)
-                .padding()
-                .background(Color.blue.opacity(0.1))
-                .cornerRadius(8)
+            .frame(width: diameter, height: diameter)
+            .position(x: geometry.size.width/2, y: geometry.size.height/2)
+            .gesture(
+                DragGesture()
+                    .onEnded { value in
+                        // Detect horizontal swipe
+                        if value.translation.width < -20 {
+                            // Swipe left - next page
+                            withAnimation {
+                                currentPage = min(currentPage + 1, 2)
+                            }
+                        } else if value.translation.width > 20 {
+                            // Swipe right - previous page
+                            withAnimation {
+                                currentPage = max(currentPage - 1, 0)
+                            }
+                        }
+                    }
+            )
+            // Auto-rotate through pages every 3 seconds
+            .onAppear {
+                startPageRotationTimer()
+            }
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(UIColor.systemBackground).opacity(0.9))
-                .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
-        )
     }
+    
+    // Timer to auto-rotate through pages
+    private func startPageRotationTimer() {
+        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { timer in
+            withAnimation {
+                // Cycle through pages
+                currentPage = (currentPage + 1) % 3
+            }
+        }
+    }
+    
+    // All the existing helper methods remain the same
     
     private func formattedDate() -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return formatter.string(from: date)
+    }
+    
+    private func totalMilkVolume() -> Int {
+        let events = dataStore.getEvents(for: date)
+        var total: Double = 0
+        
+        for event in events where event.type == .feed {
+            if let feedEvent = dataStore.getFeedEvent(id: event.id, for: date) {
+                total += feedEvent.amount
+            }
+        }
+        
+        // If we have no data for this day yet, predict from last 3 days
+        if total == 0 {
+            total = predictTotalMilkVolume()
+        }
+        
+        return Int(total)
+    }
+    
+    private func feedCount() -> Int {
+        let events = dataStore.getEvents(for: date)
+        let feedEvents = events.filter { $0.type == .feed }
+        
+        // If we have no data for this day yet, predict from previous patterns
+        if feedEvents.isEmpty {
+            return predictFeedCount()
+        }
+        
+        return feedEvents.count
+    }
+    
+    private func napCount() -> Int {
+        let events = dataStore.getEvents(for: date)
+        let napEvents = events.filter {
+            if $0.type == .sleep,
+               let sleepEvent = dataStore.getSleepEvent(id: $0.id, for: date),
+               sleepEvent.sleepType == .nap {
+                return true
+            }
+            return false
+        }
+        
+        // If we have no data for this day yet, predict from previous patterns
+        if napEvents.isEmpty {
+            return predictNapCount()
+        }
+        
+        return napEvents.count
+    }
+    
+    private func totalNapHours() -> String {
+        let events = dataStore.getEvents(for: date)
+        var totalMinutes: Double = 0
+        
+        for event in events where event.type == .sleep {
+            if let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date),
+               sleepEvent.sleepType == .nap {
+                // Calculate the duration of the nap
+                let duration = sleepEvent.endTime.timeIntervalSince(sleepEvent.date) / 60 // in minutes
+                totalMinutes += duration
+            }
+        }
+        
+        // If we have no data for this day yet, predict from previous patterns
+        if totalMinutes == 0 {
+            totalMinutes = predictTotalNapMinutes()
+        }
+        
+        // Convert to hours and format
+        let hours = Int(totalMinutes / 60)
+        let minutes = Int(totalMinutes.truncatingRemainder(dividingBy: 60))
+        
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        } else {
+            return "\(minutes)m"
+        }
+    }
+    
+    private func taskCount() -> Int {
+        let events = dataStore.getEvents(for: date)
+        return events.filter { $0.type == .task }.count
+    }
+    
+    // Prediction functions
+    private func predictTotalMilkVolume() -> Double {
+        let calendar = Calendar.current
+        var total: Double = 0
+        var days = 0
+        
+        // Look at the last 3 days
+        for i in 1...3 {
+            if let pastDate = calendar.date(byAdding: .day, value: -i, to: date) {
+                let pastEvents = dataStore.getEvents(for: pastDate)
+                var dayTotal: Double = 0
+                
+                for event in pastEvents where event.type == .feed {
+                    if let feedEvent = dataStore.getFeedEvent(id: event.id, for: pastDate) {
+                        dayTotal += feedEvent.amount
+                    }
+                }
+                
+                if dayTotal > 0 {
+                    total += dayTotal
+                    days += 1
+                }
+            }
+        }
+        
+        // Return average, or default value if no data
+        return days > 0 ? total / Double(days) : 700
+    }
+    
+    private func predictFeedCount() -> Int {
+        let calendar = Calendar.current
+        var total = 0
+        var days = 0
+        
+        // Look at the last 3 days
+        for i in 1...3 {
+            if let pastDate = calendar.date(byAdding: .day, value: -i, to: date) {
+                let pastEvents = dataStore.getEvents(for: pastDate)
+                let feedCount = pastEvents.filter { $0.type == .feed }.count
+                
+                if feedCount > 0 {
+                    total += feedCount
+                    days += 1
+                }
+            }
+        }
+        
+        // Return average, or default value if no data
+        return days > 0 ? Int(round(Double(total) / Double(days))) : 5
+    }
+    
+    private func predictNapCount() -> Int {
+        let calendar = Calendar.current
+        var total = 0
+        var days = 0
+        
+        // Look at the last 3 days
+        for i in 1...3 {
+            if let pastDate = calendar.date(byAdding: .day, value: -i, to: date) {
+                let pastEvents = dataStore.getEvents(for: pastDate)
+                let napCount = pastEvents.filter {
+                    if $0.type == .sleep,
+                       let sleepEvent = dataStore.getSleepEvent(id: $0.id, for: pastDate),
+                       sleepEvent.sleepType == .nap {
+                        return true
+                    }
+                    return false
+                }.count
+                
+                if napCount > 0 {
+                    total += napCount
+                    days += 1
+                }
+            }
+        }
+        
+        // Return average, or default value if no data
+        return days > 0 ? Int(round(Double(total) / Double(days))) : 3
+    }
+    
+    private func predictTotalNapMinutes() -> Double {
+        let calendar = Calendar.current
+        var totalMinutes: Double = 0
+        var days = 0
+        
+        // Look at the last 3 days
+        for i in 1...3 {
+            if let pastDate = calendar.date(byAdding: .day, value: -i, to: date) {
+                let pastEvents = dataStore.getEvents(for: pastDate)
+                var dayTotal: Double = 0
+                
+                for event in pastEvents where event.type == .sleep {
+                    if let sleepEvent = dataStore.getSleepEvent(id: event.id, for: pastDate),
+                       sleepEvent.sleepType == .nap {
+                        let duration = sleepEvent.endTime.timeIntervalSince(sleepEvent.date) / 60 // in minutes
+                        dayTotal += duration
+                    }
+                }
+                
+                if dayTotal > 0 {
+                    totalMinutes += dayTotal
+                    days += 1
+                }
+            }
+        }
+        
+        // Return average, or default value if no data
+        return days > 0 ? totalMinutes / Double(days) : 180 // Default to 3 hours
     }
     
     private func getDailyTip() -> String {
