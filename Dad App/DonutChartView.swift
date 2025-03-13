@@ -162,7 +162,7 @@ struct DonutChartView: View {
                 
                 // Confirmation time label after drop
                 confirmationTimeLabelsView(geometry: geometry)
-                    .zIndex(233)
+                    .zIndex(333)
                 
                 // Hidden element for refreshing view
                 Color.clear
