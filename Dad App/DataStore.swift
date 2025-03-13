@@ -24,6 +24,7 @@ class DataStore: ObservableObject {
     @Published var feedEvents: [String: [FeedEvent]] = [:] // [DateString: [FeedEvent]]
     @Published var sleepEvents: [String: [SleepEvent]] = [:] // [DateString: [SleepEvent]]
     @Published var taskEvents: [String: [TaskEvent]] = [:]
+    @Published var isPastDateEditingEnabled: Bool = false
     
     // For undo/redo functionality
     var lastEventStates: [EventState] = [] // Stack of states for undo
@@ -104,6 +105,20 @@ class DataStore: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+    }
+    
+    func isEditingAllowed(for date: Date) -> Bool {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let checkDate = calendar.startOfDay(for: date)
+        
+        // If it's today or a future date, editing is always allowed
+        if checkDate >= today {
+            return true
+        }
+        
+        // For past dates, check if past date editing is enabled
+        return isPastDateEditingEnabled
     }
     
     func addFeedEvent(_ event: FeedEvent, for date: Date) {
@@ -395,7 +410,6 @@ class DataStore: ObservableObject {
         return formatter.string(from: date)
     }
     
-    // Undo functionality
     func undoLastChange() {
         guard let lastState = lastEventStates.last else { return }
         
@@ -475,6 +489,39 @@ class DataStore: ObservableObject {
                     let generator = UIImpactFeedbackGenerator(style: .medium)
                     generator.impactOccurred()
                 }
+                else if deletedState.eventType == .task, let taskEvent = deletedState.eventData as? TaskEvent {
+                    // Add back to task events
+                    if var currentTaskEvents = taskEvents[deletedState.dateString] {
+                        currentTaskEvents.append(taskEvent)
+                        taskEvents[deletedState.dateString] = currentTaskEvents
+                    } else {
+                        taskEvents[deletedState.dateString] = [taskEvent]
+                    }
+                    
+                    // Add back to general events
+                    if var currentEvents = events[deletedState.dateString] {
+                        currentEvents.append(taskEvent.toEvent())
+                        events[deletedState.dateString] = currentEvents
+                    } else {
+                        events[deletedState.dateString] = [taskEvent.toEvent()]
+                    }
+                    
+                    // Re-schedule notification if applicable
+                    if let notificationTime = Calendar.current.date(byAdding: .hour, value: -1, to: taskEvent.date) {
+                        NotificationManager.shared.scheduleTaskNotification(for: taskEvent, at: notificationTime)
+                    }
+                    
+                    // Post notification about event restoration
+                    NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: taskEvent.id)
+                    
+                    // Cancel the cleanup timer
+                    deletionTimers[taskEvent.id]?.invalidate()
+                    deletionTimers.removeValue(forKey: taskEvent.id)
+                    
+                    // Provide haptic feedback for undo
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
                 
                 // Create a special redo state for the deletion
                 redoEventStates.append(EventState(
@@ -524,7 +571,12 @@ class DataStore: ObservableObject {
                         sleepType: sleepEvent.sleepType,
                         endTime: oldEndTime,
                         notes: sleepEvent.notes,
-                        isTemplate: sleepEvent.isTemplate
+                        isTemplate: sleepEvent.isTemplate,
+                        isOngoing: sleepEvent.isOngoing,
+                        isPaused: sleepEvent.isPaused,
+                        pauseIntervals: sleepEvent.pauseIntervals,
+                        lastPauseTime: sleepEvent.lastPauseTime,
+                        actualSleepDuration: sleepEvent.actualSleepDuration
                     )
                     
                     // Update the sleep event
@@ -534,8 +586,30 @@ class DataStore: ObservableObject {
                     let generator = UIImpactFeedbackGenerator(style: .medium)
                     generator.impactOccurred()
                 }
-            case .task: break
-                // TODO
+                
+            case .task:
+                if let taskEvent = getTaskEvent(id: lastState.eventId, for: date),
+                   let oldEndTime = lastState.oldEndTime {
+                    // Create a new task event with the old times
+                    let restoredEvent = TaskEvent(
+                        id: taskEvent.id,
+                        date: lastState.oldStartTime,
+                        title: taskEvent.title,
+                        endTime: oldEndTime,
+                        notes: taskEvent.notes,
+                        isTemplate: taskEvent.isTemplate,
+                        completed: taskEvent.completed,
+                        priority: taskEvent.priority,
+                        isOngoing: taskEvent.isOngoing
+                    )
+                    
+                    // Update the task event
+                    updateTaskEvent(restoredEvent, for: date)
+                    
+                    // Provide haptic feedback for undo
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
             }
         }
         
@@ -545,6 +619,7 @@ class DataStore: ObservableObject {
         }
     }
     
+    // Redo functionality
     // Redo functionality
     func redoLastChange() {
         guard let redoState = redoEventStates.last else { return }
@@ -644,8 +719,42 @@ class DataStore: ObservableObject {
                     generator.impactOccurred()
                 }
                 
-            case .task: break
-                // TODO
+            case .task:
+                if let taskEvent = getTaskEvent(id: redoState.eventId, for: date) {
+                    // Re-cache the event before re-deletion
+                    let deletedState = DeletedEventState(
+                        eventId: taskEvent.id,
+                        eventType: .task,
+                        date: date,
+                        dateString: formatDate(date),
+                        eventData: taskEvent
+                    )
+                    deletedEventsCache[taskEvent.id] = deletedState
+                    
+                    // Remove from task events and events collections
+                    if var currentTaskEvents = taskEvents[formatDate(date)] {
+                        currentTaskEvents.removeAll(where: { $0.id == taskEvent.id })
+                        taskEvents[formatDate(date)] = currentTaskEvents
+                    }
+                    
+                    if var currentEvents = events[formatDate(date)] {
+                        currentEvents.removeAll(where: { $0.id == taskEvent.id })
+                        events[formatDate(date)] = currentEvents
+                    }
+                    
+                    // Cancel notification
+                    NotificationManager.shared.cancelNotification(for: taskEvent.id)
+                    
+                    // Post notification about the event deletion
+                    NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: taskEvent.id)
+                    
+                    // Schedule removal from cache after delay
+                    scheduleDeletionCleanup(eventId: taskEvent.id)
+                    
+                    // Provide haptic feedback
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
             }
         } else {
             // Handle non-deletion redos as before
@@ -685,7 +794,12 @@ class DataStore: ObservableObject {
                         sleepType: sleepEvent.sleepType,
                         endTime: newEndTime,
                         notes: sleepEvent.notes,
-                        isTemplate: sleepEvent.isTemplate
+                        isTemplate: sleepEvent.isTemplate,
+                        isOngoing: sleepEvent.isOngoing,
+                        isPaused: sleepEvent.isPaused,
+                        pauseIntervals: sleepEvent.pauseIntervals,
+                        lastPauseTime: sleepEvent.lastPauseTime,
+                        actualSleepDuration: sleepEvent.actualSleepDuration
                     )
                     
                     // Update the sleep event
@@ -695,8 +809,30 @@ class DataStore: ObservableObject {
                     let generator = UIImpactFeedbackGenerator(style: .medium)
                     generator.impactOccurred()
                 }
-            case .task: break
-                // TODO
+                
+            case .task:
+                if let taskEvent = getTaskEvent(id: redoState.eventId, for: date),
+                   let newEndTime = redoState.newEndTime {
+                    // Create a new task event with the redo times
+                    let restoredEvent = TaskEvent(
+                        id: taskEvent.id,
+                        date: redoState.newStartTime,
+                        title: taskEvent.title,
+                        endTime: newEndTime,
+                        notes: taskEvent.notes,
+                        isTemplate: taskEvent.isTemplate,
+                        completed: taskEvent.completed,
+                        priority: taskEvent.priority,
+                        isOngoing: taskEvent.isOngoing
+                    )
+                    
+                    // Update the task event
+                    updateTaskEvent(restoredEvent, for: date)
+                    
+                    // Provide haptic feedback for redo
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                }
             }
         }
         
@@ -734,6 +870,17 @@ class DataStore: ObservableObject {
                 newEndTime: sleepEvent.endTime,
                 newPrepTime: nil
             ))
+        } else if let taskEvent = getTaskEvent(id: eventId, for: dateFormatted) {
+            redoEventStates.append(EventState(
+                eventId: eventId,
+                eventType: .task,
+                oldStartTime: taskEvent.date, // Current time for potential undo
+                oldEndTime: taskEvent.endTime,
+                oldPrepTime: nil,
+                newStartTime: taskEvent.date, // Current time for redo
+                newEndTime: taskEvent.endTime,
+                newPrepTime: nil
+            ))
         }
     }
     
@@ -764,6 +911,17 @@ class DataStore: ObservableObject {
                 oldPrepTime: nil,
                 newStartTime: sleepEvent.date,
                 newEndTime: sleepEvent.endTime,
+                newPrepTime: nil
+            ))
+        } else if let taskEvent = getTaskEvent(id: eventId, for: dateFormatted) {
+            lastEventStates.append(EventState(
+                eventId: eventId,
+                eventType: .task,
+                oldStartTime: taskEvent.date,
+                oldEndTime: taskEvent.endTime,
+                oldPrepTime: nil,
+                newStartTime: taskEvent.date,
+                newEndTime: taskEvent.endTime,
                 newPrepTime: nil
             ))
         }
@@ -1096,6 +1254,9 @@ class DataStore: ObservableObject {
         // Schedule removal from cache after delay
         scheduleDeletionCleanup(eventId: event.id)
         
+        // Clear the position cache for this event
+        NotificationCenter.default.post(name: NSNotification.Name("ClearPositionCache"), object: event.id)
+        
         // Provide haptic feedback to confirm deletion
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
@@ -1161,6 +1322,9 @@ class DataStore: ObservableObject {
             NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
         }
         
+        // Clear the position cache for this event
+        NotificationCenter.default.post(name: NSNotification.Name("ClearPositionCache"), object: event.id)
+        
         // Schedule removal from cache after delay
         scheduleDeletionCleanup(eventId: event.id)
     }
@@ -1208,6 +1372,9 @@ class DataStore: ObservableObject {
         
         // Schedule removal from cache after delay
         scheduleDeletionCleanup(eventId: event.id)
+        
+        // Clear the position cache for this event
+        NotificationCenter.default.post(name: NSNotification.Name("ClearPositionCache"), object: event.id)
         
         // Provide haptic feedback to confirm deletion
         let generator = UIImpactFeedbackGenerator(style: .medium)

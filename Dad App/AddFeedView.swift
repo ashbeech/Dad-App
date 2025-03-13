@@ -29,7 +29,7 @@ struct AddFeedView: View {
         self.date = date
         self.initialTime = initialTime
         
-        // Initialize with the provided initialTime instead of just the date
+        // Initialize with the provided initialTime
         let calendar = Calendar.current
         
         // Extract year, month, day from date and hour, minute from initialTime

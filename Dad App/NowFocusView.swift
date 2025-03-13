@@ -302,7 +302,7 @@ struct NowFocusView: View {
         
         // Get current time components
         let calendar = Calendar.current
-        var nowComponents = calendar.dateComponents([.hour, .minute], from: now)
+        let nowComponents = calendar.dateComponents([.hour, .minute], from: now)
         
         // Get bedtime components
         let bedComponents = calendar.dateComponents([.hour, .minute], from: bedTime)
@@ -316,11 +316,12 @@ struct NowFocusView: View {
 }
 
 struct PastDateView: View {
+    @EnvironmentObject var dataStore: DataStore
     let date: Date
     
     var body: some View {
         GeometryReader { geometry in
-            let diameter = min(geometry.size.width, geometry.size.height)
+            let diameter = min(geometry.size.width + 25, geometry.size.height + 25)
             
             ZStack {
                 Circle()
@@ -340,16 +341,48 @@ struct PastDateView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                     
-                    Text("View historical data only")
+                    // Show different text based on lock state
+                    Text(dataStore.isPastDateEditingEnabled ? "Editing enabled" : "View historical data only")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(dataStore.isPastDateEditingEnabled ? .blue : .secondary)
                         .padding(.top, 5)
+                    
+                    // Add padlock button
+                    Button(action: {
+                        // Toggle the editing state with animation and haptic feedback
+                        withAnimation(.spring()) {
+                            dataStore.isPastDateEditingEnabled.toggle()
+                        }
+                        
+                        // Provide haptic feedback when toggling
+                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                        generator.impactOccurred()
+                        
+                        // Post notification so other views can update
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("PastDateEditingStateChanged"),
+                            object: dataStore.isPastDateEditingEnabled
+                        )
+                    }) {
+                        HStack {
+                            Image(systemName: dataStore.isPastDateEditingEnabled ? "lock.open.fill" : "lock.fill")
+                                .font(.system(size: 16))
+                            Text(dataStore.isPastDateEditingEnabled ? "Lock Editing" : "Unlock Editing")
+                                .font(.callout)
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .background(dataStore.isPastDateEditingEnabled ? Color.blue : Color.gray)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+                    .padding(.top, 0)
                 }
                 .padding()
-                .frame(width: diameter, height: diameter)
+                .frame(width: diameter + 25, height: diameter + 25)
                 .clipShape(Circle()) // Ensure content stays in circle
             }
-            .frame(width: diameter, height: diameter)
+            //.frame(width: diameter + 25, height: diameter + 25)
             .position(x: geometry.size.width/2, y: geometry.size.height/2)
         }
     }
@@ -359,6 +392,7 @@ struct PastDateView: View {
         formatter.dateStyle = .medium
         return formatter.string(from: date)
     }
+    
 }
 
 struct NextEventInfoView: View {
@@ -664,12 +698,6 @@ struct DayCompletionView: View {
                 .foregroundColor(.secondary)
         }
         .padding()
-        /*
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.9))
-                .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
-        )             */
         .transition(.opacity)
     }
 }
@@ -692,12 +720,12 @@ struct FutureDateSummaryView: View {
                 // Content with clipping to ensure it stays in circle
                 VStack(spacing: 3) {
                     /*
-                    Text("Plan")
-                        .font(.title3)
-                        .foregroundColor(.gray)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    */
+                     Text("Plan")
+                     .font(.title3)
+                     .foregroundColor(.gray)
+                     .lineLimit(1)
+                     .minimumScaleFactor(0.7)
+                     */
                     // Horizontal pager (custom implementation)
                     ZStack {
                         // Only show the current page
@@ -770,24 +798,24 @@ struct FutureDateSummaryView: View {
                     .padding(.bottom, 3)
                     
                     /*
-                    // Daily tip
-                    Text(getDailyTip())
-                        .font(.footnote)
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.7)
-                        .padding(10)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(8)
-                        .padding(.horizontal, diameter * 0.05)
+                     // Daily tip
+                     Text(getDailyTip())
+                     .font(.footnote)
+                     .foregroundColor(.primary)
+                     .multilineTextAlignment(.center)
+                     .lineLimit(2)
+                     .minimumScaleFactor(0.7)
+                     .padding(10)
+                     .background(Color.blue.opacity(0.1))
+                     .cornerRadius(8)
+                     .padding(.horizontal, diameter * 0.05)
                      */
                 }
                 .padding(diameter * 0.05)
-                .frame(width: diameter, height: diameter)
+                .frame(width: diameter + 25, height: diameter + 25)
                 .clipShape(Circle()) // Essential: clip content to circular shape
             }
-            .frame(width: diameter, height: diameter)
+            .frame(width: diameter + 25, height: diameter + 25)
             .position(x: geometry.size.width/2, y: geometry.size.height/2)
             .gesture(
                 DragGesture()

@@ -10,6 +10,7 @@ import SwiftUI
 struct EventListView: View {
     @EnvironmentObject var dataStore: DataStore
     let events: [Event]
+    let date: Date
     @Binding var selectedEvent: Event?
     
     // Add a UUID for forcing refreshes
@@ -28,17 +29,25 @@ struct EventListView: View {
         } else {
             List {
                 ForEach(events.sorted(by: { $0.date < $1.date }), id: \.id) { event in
-                    EventRow(event: event)
+                    EventRow(event: event, date: date) // Pass date to EventRow
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            selectedEvent = event
+                            // Check if editing is allowed before selecting
+                            if dataStore.isEditingAllowed(for: date) {
+                                selectedEvent = event
+                            } else {
+                                // Show visual feedback that editing is locked
+                                let generator = UINotificationFeedbackGenerator()
+                                generator.notificationOccurred(.warning)
+                            }
                         }
-                    // Add a more stable ID that doesn't change with every timer update
+                    // Add a slightly different styling for past dates that are locked
+                        .opacity(isPastDateLocked() ? 0.8 : 1.0)
                         .id("event-row-\(event.id)")
                 }
             }
             .listStyle(PlainListStyle())
-            .id(listRefreshID) // Only refresh the entire list when needed
+            .id(listRefreshID)
             .onAppear {
                 setupRefreshTimer()
                 
@@ -72,6 +81,13 @@ struct EventListView: View {
                 NotificationCenter.default.removeObserver(self)
             }
         }
+    }
+    
+    private func isPastDateLocked() -> Bool {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let checkDate = calendar.startOfDay(for: date)
+        return checkDate < today && !dataStore.isPastDateEditingEnabled
     }
     
     // Add method to force refresh the entire list (use sparingly)
@@ -108,8 +124,7 @@ struct EventListView: View {
 struct EventRow: View {
     @EnvironmentObject var dataStore: DataStore
     let event: Event
-    
-    // Add these state variables
+    let date: Date
     @State private var currentFormattedDuration: String = ""
     @State private var timerID: UUID = UUID()
     @State private var isPaused: Bool = false
@@ -147,6 +162,15 @@ struct EventRow: View {
                                 .font(.caption)
                                 .foregroundColor(.red)
                         }
+                    }
+                }
+                .opacity(isPastDateLocked() ? 0.8 : 1.0)
+                .onTapGesture {
+                    // Check if editing is allowed before allowing selection
+                    if dataStore.isEditingAllowed(for: date) {
+                        NotificationCenter.default.post(name: NSNotification.Name("EventSelected"), object: event)
+                    } else {
+                        showLockFeedback()
                     }
                 }
                 
@@ -226,6 +250,20 @@ struct EventRow: View {
                 .font(.title)
         }
         .padding(.vertical, 4)
+    }
+    
+    // Helper to check if we're dealing with a locked past date
+    private func isPastDateLocked() -> Bool {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let checkDate = calendar.startOfDay(for: date)
+        return checkDate < today && !dataStore.isPastDateEditingEnabled
+    }
+    
+    private func showLockFeedback() {
+        // Provide haptic feedback
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.warning)
     }
     
     private func updateCurrentDuration(sleepEvent: SleepEvent) {

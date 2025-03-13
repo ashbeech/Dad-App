@@ -20,14 +20,15 @@ struct DonutChartView: View {
     @State private var dragState = DragState()
     @State private var currentActiveEvent: ActiveEvent? = nil
     @State private var timer: Timer? = nil
+    @State private var pauseStateObserver: NSObjectProtocol? = nil
     @State private var refreshTrigger: Bool = false
     @State private var lastWakeTime: Date = Date()
     @State private var lastBedTime: Date = Date()
-    
     @State private var currentTimeAngle: Double = 0
     @State private var animateCurrentTimeLine: Bool = false
     @State private var timerUpdateCounter: Int = 0
     @State private var forceRedraw: UUID = UUID()
+    @State private var showLockAnimation: Bool = false
     
     private struct DragState {
         var isDragging: Bool = false
@@ -40,11 +41,15 @@ struct DonutChartView: View {
         var dragEndAngle: Double = 0
         var originalStartTime: Date = Date()
         var originalEndTime: Date = Date()
+        var dragStartLocation: CGPoint = .zero
+        var dragStartAngleOffset: Double = 0 // Add this to track angle offset
+        static var lastKnownPositions: [UUID: (startAngle: Double, endAngle: Double?)] = [:]
         
         mutating func reset() {
             isDragging = false
             draggedEventId = nil
             showConfirmationTime = false
+            dragStartAngleOffset = 0
         }
     }
     
@@ -75,8 +80,16 @@ struct DonutChartView: View {
                     lineWidth: donutWidth,
                     color: Color.gray.opacity(0.7),
                     onDoubleTap: { angle in
+                        guard dataStore.isEditingAllowed(for: date) else { return }
                         // Only proceed if not already dragging something
                         if !dragState.isDragging {
+                            
+                            if !dataStore.isEditingAllowed(for: date) {
+                                // Show lock feedback
+                                showLockFeedback()
+                                return
+                            }
+                            
                             // Convert angle to time
                             let tappedTime = timeFromAngle(angle)
                             
@@ -90,14 +103,16 @@ struct DonutChartView: View {
                             let generator = UIImpactFeedbackGenerator(style: .medium)
                             generator.impactOccurred()
                         }
-                    }
+                    },
+                    date: date
                 )
+                .environmentObject(dataStore)
                 .frame(width: geometry.size.width + donutWidth, height: geometry.size.height + donutWidth)
-                //.padding()
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                 .gesture(
                     TapGesture(count: 2)
                         .onEnded { _ in
+                            guard dataStore.isEditingAllowed(for: date) else { return }
                             // Only proceed if not already dragging something
                             if !dragState.isDragging {
                                 _ = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
@@ -171,6 +186,17 @@ struct DonutChartView: View {
                 lastWakeTime = dataStore.baby.wakeTime
                 lastBedTime = dataStore.baby.bedTime
                 
+                // Add notification observer for past date editing state changes
+                NotificationCenter.default.addObserver(
+                    forName: NSNotification.Name("PastDateEditingStateChanged"),
+                    object: nil,
+                    queue: .main
+                ) { notification in
+                    // Force view refresh when editing state changes
+                    self.forceRedraw = UUID()
+                    self.refreshTrigger.toggle()
+                }
+                
                 // Listen for notifications to clear active nap
                 NotificationCenter.default.addObserver(
                     forName: NSNotification.Name("ClearActiveNap"),
@@ -180,6 +206,17 @@ struct DonutChartView: View {
                     if let eventId = notification.object as? UUID,
                        currentActiveEvent?.id == eventId {
                         currentActiveEvent = nil
+                    }
+                }
+                
+                // Add observer for position cache cleanup
+                NotificationCenter.default.addObserver(
+                    forName: NSNotification.Name("ClearPositionCache"),
+                    object: nil,
+                    queue: .main
+                ) { notification in
+                    if let eventId = notification.object as? UUID {
+                        DragState.lastKnownPositions.removeValue(forKey: eventId)
                     }
                 }
                 
@@ -203,25 +240,42 @@ struct DonutChartView: View {
                     }
                 }
                 
+                // Add observer for when app returns to foreground to reset timer
+                NotificationCenter.default.addObserver(
+                    forName: UIApplication.didBecomeActiveNotification,
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    // Reset and restart timer when app becomes active
+                    self.enhancedTimerSetup()
+                }
+                
                 // Check for any ongoing naps and set as active event
                 checkForOngoingNaps()
                 
                 // Setup the enhanced timer
                 enhancedTimerSetup()
                 
-                // Start with the correct current time
-                if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday() {
-                    currentTimeAngle = angleForTime(currentTime)
+                // Start with the correct current time - do this explicitly
+                if Calendar.current.isDateInToday(date) {
+                    if let currentTime = getCurrentTimeForToday() {
+                        currentTimeAngle = angleForTime(currentTime)
+                        // Force refresh to ensure the marker is drawn immediately
+                        refreshTrigger.toggle()
+                    }
                 }
             }
             .onDisappear {
-                NotificationCenter.default.removeObserver(self)
+                // Stop the timer
                 timer?.invalidate()
                 timer = nil
+                
+                // Remove all notification center observers
+                NotificationCenter.default.removeObserver(self)
             }
-            //.frame(width: geometry.size.width * 1.2, height: geometry.size.height * 1.2)
-            //.frame(width: geometry.size.width + donutWidth, height: geometry.size.height + donutWidth)
-            //.frame(width: geometry.size.width, height: geometry.size.height)
+            .overlay(
+                LockFeedbackOverlay(isVisible: $showLockAnimation)
+            )
             .id(forceRedraw)
         }
         .aspectRatio(1, contentMode: .fit)
@@ -504,6 +558,7 @@ struct DonutChartView: View {
                 .gesture(
                     DragGesture()
                         .onChanged { value in
+                            guard dataStore.isEditingAllowed(for: date) else { return }
                             // Disable animations during drag for better performance
                             var transaction = Transaction()
                             transaction.disablesAnimations = true
@@ -516,7 +571,8 @@ struct DonutChartView: View {
                         }
                 )
                 .onTapGesture {
-                    if !dragState.isDragging {
+                    guard dataStore.isEditingAllowed(for: date) else { return }
+                    if !dragState.isDragging && (Calendar.current.isDateInToday(date) || dataStore.isPastDateEditingEnabled) {
                         selectedEvent = event
                     }
                 }
@@ -620,6 +676,7 @@ struct DonutChartView: View {
                     isOngoing ? nil : // No gesture for ongoing naps
                     DragGesture()
                         .onChanged { value in
+                            guard dataStore.isEditingAllowed(for: date) else { return }
                             if !isOngoing {
                                 var transaction = Transaction()
                                 transaction.disablesAnimations = true
@@ -636,6 +693,8 @@ struct DonutChartView: View {
                 )
                 // For non-ongoing naps, allow selection. For ongoing, defer to NowFocusView
                 .onTapGesture {
+                    guard dataStore.isEditingAllowed(for: date) else { return }
+                    // Calendar.current.isDateInToday(date) || dataStore.isPastDateEditingEnabled
                     if !dragState.isDragging && !isOngoing {
                         // Only select non-ongoing naps
                         selectedEvent = event
@@ -648,8 +707,14 @@ struct DonutChartView: View {
                 // Add a dedicated ID to force updates when pause state changes
                 .id("sleep-event-\(event.id)-\(isPaused ? "paused" : "running")-\(refreshTrigger)")
                 .onAppear {
+                    
+                    // Remove any existing observer first to avoid duplicates
+                    if let observer = pauseStateObserver {
+                        NotificationCenter.default.removeObserver(observer)
+                    }
+                    
                     // Listen for notifications about pause state changes
-                    NotificationCenter.default.addObserver(
+                    pauseStateObserver = NotificationCenter.default.addObserver(
                         forName: NSNotification.Name("NapPauseStateChanged"),
                         object: nil,
                         queue: .main
@@ -665,16 +730,28 @@ struct DonutChartView: View {
                     }
                 }
                 .onDisappear {
-                    NotificationCenter.default.removeObserver(self)
-                }
+                    if let observer = pauseStateObserver {
+                        NotificationCenter.default.removeObserver(observer)
+                        pauseStateObserver = nil
+                    }                }
             }
         }
     }
     
     private func enhancedTimerSetup() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            // No need for [weak self] or guard let self = self here
-            
+        // Cancel any existing timer first to avoid duplicate timers
+        timer?.invalidate()
+        timer = nil
+        
+        // Reset the current time angle immediately for today's date
+        if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday() {
+            currentTimeAngle = angleForTime(currentTime)
+            // Force UI update
+            refreshTrigger.toggle()
+        }
+        
+        // Create a new timer with more reliable timing - every 15 seconds is enough for smooth updates
+        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in
             if Calendar.current.isDateInToday(self.date) {
                 if let currentTime = self.getCurrentTimeForToday() {
                     // Use transaction to avoid animation conflicts
@@ -682,12 +759,19 @@ struct DonutChartView: View {
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
                         self.currentTimeAngle = self.angleForTime(currentTime)
+                        // Force UI update with toggle
+                        self.refreshTrigger.toggle()
                     }
                 }
             }
             
             self.timerUpdateCounter += 1
             self.checkForOngoingNaps()
+        }
+        
+        // Ensure timer runs even when scrolling (important for reliable updates)
+        if let timer = timer {
+            RunLoop.main.add(timer, forMode: .common)
         }
     }
     
@@ -901,6 +985,7 @@ struct DonutChartView: View {
             .gesture(
                 DragGesture()
                     .onChanged { value in
+                        guard dataStore.isEditingAllowed(for: date) else { return }
                         if !dragState.isDragging, let _ = dataStore.getFeedEvent(id: event.id, for: date) {
                             dataStore.saveCurrentStateForUndo(eventId: event.id, for: date)
                             let generator = UIImpactFeedbackGenerator(style: .light)
@@ -919,6 +1004,7 @@ struct DonutChartView: View {
                     }
             )
             .onTapGesture {
+                guard dataStore.isEditingAllowed(for: date) else { return }
                 if !dragState.isDragging {
                     selectedEvent = event
                 }
@@ -946,11 +1032,17 @@ struct DonutChartView: View {
                 .frame(width: donutWidth, height: donutWidth)
                 .position(pointOnDonutCenter(angle: arcStartAngle, geometry: geometry))
                 .onTapGesture {
+                    guard dataStore.isEditingAllowed(for: date) else { return }
                     if !dragState.isDragging {
-                        if let event = wakeEvent {
-                            selectedEvent = event.toEvent()
+                        // Check if editing is allowed
+                        if dataStore.isEditingAllowed(for: date) {
+                            if let event = wakeEvent {
+                                selectedEvent = event.toEvent()
+                            } else {
+                                createDefaultWakeEvent()
+                            }
                         } else {
-                            createDefaultWakeEvent()
+                            showLockFeedback()
                         }
                     }
                 }
@@ -964,11 +1056,17 @@ struct DonutChartView: View {
                 .frame(width: donutWidth, height: donutWidth)
                 .position(pointOnDonutCenter(angle: arcEndAngle, geometry: geometry))
                 .onTapGesture {
+                    guard dataStore.isEditingAllowed(for: date) else { return }
                     if !dragState.isDragging {
-                        if let event = bedtimeEvent {
-                            selectedEvent = event.toEvent()
+                        // Check if editing is allowed
+                        if dataStore.isEditingAllowed(for: date) {
+                            if let event = bedtimeEvent {
+                                selectedEvent = event.toEvent()
+                            } else {
+                                createDefaultBedtimeEvent()
+                            }
                         } else {
-                            createDefaultBedtimeEvent()
+                            showLockFeedback()
                         }
                     }
                 }
@@ -1207,6 +1305,7 @@ struct DonutChartView: View {
                             .background(Color.black.opacity(0.7))
                             .cornerRadius(4)
                             .position(pointOutsideDonut(angle: dragState.dragAngle, geometry: geometry, offset: -35))
+                            
                     case .endPoint:
                         Text(formatTime(dragState.dragEndTime))
                             .font(.caption)
@@ -1215,23 +1314,36 @@ struct DonutChartView: View {
                             .background(Color.black.opacity(0.7))
                             .cornerRadius(4)
                             .position(pointOutsideDonut(angle: dragState.dragEndAngle, geometry: geometry, offset: -35))
+                            
                     case .wholeSleep:
-                        if let event = events.first(where: { $0.id == dragState.draggedEventId }),
-                           event.type == .sleep {
-                            // For sleep events, show both times
-                            VStack(spacing: 2) {
+                        // Check if this is a capsule-style event with both start and end times
+                        if let event = events.first(where: { $0.id == dragState.draggedEventId }) {
+                            // Use a consistent display for any event type that has a start and end time
+                            if event.type == .sleep || event.type == .task {
+                                // Show both start and end times for capsule-style events
+                                VStack(spacing: 2) {
+                                    Text(formatTime(dragState.dragTime))
+                                    Text("-")
+                                    Text(formatTime(dragState.dragEndTime))
+                                }
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding(4)
+                                .background(Color.black.opacity(0.7))
+                                .cornerRadius(4)
+                                .position(pointOutsideDonut(angle: (dragState.dragAngle + dragState.dragEndAngle) / 2, geometry: geometry, offset: -50))
+                            } else {
+                                // For point events like feed, show just one time
                                 Text(formatTime(dragState.dragTime))
-                                Text("-")
-                                Text(formatTime(dragState.dragEndTime))
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(4)
+                                    .background(Color.black.opacity(0.7))
+                                    .cornerRadius(4)
+                                    .position(pointOutsideDonut(angle: dragState.dragAngle, geometry: geometry, offset: -35))
                             }
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .padding(4)
-                            .background(Color.black.opacity(0.7))
-                            .cornerRadius(4)
-                            .position(pointOutsideDonut(angle: (dragState.dragAngle + dragState.dragEndAngle) / 2, geometry: geometry, offset: -50))
                         } else {
-                            // For feed events, show just one time
+                            // Fallback if event not found
                             Text(formatTime(dragState.dragTime))
                                 .font(.caption)
                                 .foregroundColor(.white)
@@ -1250,9 +1362,8 @@ struct DonutChartView: View {
         Group {
             if dragState.showConfirmationTime, !dragState.isDragging, dragState.draggedEventId != nil {
                 Group {
-                    if let event = events.first(where: { $0.id == dragState.draggedEventId }),
-                       event.type == .sleep {
-                        // For sleep events, show appropriate confirmation
+                    if let event = events.first(where: { $0.id == dragState.draggedEventId }) {
+                        // Handle confirmation labels based on drag mode and event type
                         switch dragState.dragMode {
                         case .startPoint:
                             Text(formatTime(dragState.dragTime))
@@ -1263,6 +1374,7 @@ struct DonutChartView: View {
                                 .cornerRadius(4)
                                 .position(pointOutsideDonut(angle: dragState.dragAngle, geometry: geometry, offset: -35))
                                 .transition(.opacity)
+                                
                         case .endPoint:
                             Text(formatTime(dragState.dragEndTime))
                                 .font(.caption)
@@ -1272,23 +1384,37 @@ struct DonutChartView: View {
                                 .cornerRadius(4)
                                 .position(pointOutsideDonut(angle: dragState.dragEndAngle, geometry: geometry, offset: -35))
                                 .transition(.opacity)
+                                
                         case .wholeSleep:
-                            // Show confirmation in middle for whole sleep drag
-                            VStack(spacing: 2) {
+                            // Consistent display for capsule-style events (sleep and task)
+                            if event.type == .sleep || event.type == .task {
+                                // Show both start and end times for capsule-style events
+                                VStack(spacing: 2) {
+                                    Text(formatTime(dragState.dragTime))
+                                    Text("-")
+                                    Text(formatTime(dragState.dragEndTime))
+                                }
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding(4)
+                                .background(Color.green.opacity(0.9))
+                                .cornerRadius(4)
+                                .position(pointOutsideDonut(angle: (dragState.dragAngle + dragState.dragEndAngle) / 2, geometry: geometry, offset: -50))
+                                .transition(.opacity)
+                            } else {
+                                // For point events like feed, show just one time
                                 Text(formatTime(dragState.dragTime))
-                                Text("-")
-                                Text(formatTime(dragState.dragEndTime))
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(4)
+                                    .background(Color.green.opacity(0.9))
+                                    .cornerRadius(4)
+                                    .position(pointOutsideDonut(angle: dragState.dragAngle, geometry: geometry, offset: -35))
+                                    .transition(.opacity)
                             }
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .padding(4)
-                            .background(Color.green.opacity(0.9))
-                            .cornerRadius(4)
-                            .position(pointOutsideDonut(angle: (dragState.dragAngle + dragState.dragEndAngle) / 2, geometry: geometry, offset: -50))
-                            .transition(.opacity)
                         }
                     } else {
-                        // For feed events, simple confirmation
+                        // Fallback if event not found
                         Text(formatTime(dragState.dragTime))
                             .font(.caption)
                             .foregroundColor(.white)
@@ -1306,6 +1432,8 @@ struct DonutChartView: View {
     // MARK: - Drag Handling
     
     private func handleSleepEventDragChange(value: DragGesture.Value, event: Event, sleepEvent: SleepEvent, geometry: GeometryProxy) {
+        guard dataStore.isEditingAllowed(for: date) else { return }
+        
         // Check if this is an ongoing nap - if so, abort immediately
         let isOngoing = sleepEvent.isOngoing && sleepEvent.sleepType == .nap && Calendar.current.isDateInToday(date)
         if isOngoing {
@@ -1313,29 +1441,79 @@ struct DonutChartView: View {
             return
         }
         
-        // First drag begins - determine drag mode
+        // First drag begins - determine drag mode and store initial values
         if !dragState.isDragging {
             // Store original times for whole sleep dragging
             dragState.originalStartTime = sleepEvent.date
             dragState.originalEndTime = sleepEvent.endTime
             
-            // Calculate angles
-            let startAngle = angleForTime(sleepEvent.date)
-            let endAngle = angleForTime(sleepEvent.endTime)
-            let tapAngle = angleFromPoint(value.startLocation, geometry: geometry)
+            // Store the initial touch location
+            dragState.dragStartLocation = value.startLocation
             
-            // Calculate distance from tap to start and end points
-            let startDiff = angleDifference(tapAngle, startAngle)
-            let endDiff = angleDifference(tapAngle, endAngle)
-            
-            // Determine drag mode based on proximity to start/end points
-            if startDiff < 10 { // Within 10 degrees of start
-                dragState.dragMode = .startPoint
-            } else if endDiff < 10 { // Within 10 degrees of end
-                dragState.dragMode = .endPoint
+            // Get the last known position if available
+            if let lastPosition = DragState.lastKnownPositions[event.id] {
+                // Calculate angles
+                let startAngle = lastPosition.startAngle
+                let endAngle = lastPosition.endAngle ?? angleForTime(sleepEvent.endTime)
+                let tapAngle = angleFromPoint(value.startLocation, geometry: geometry)
+                
+                // Calculate distance from tap to start and end points
+                let startDiff = angleDifference(tapAngle, startAngle)
+                let endDiff = angleDifference(tapAngle, endAngle)
+                
+                // Determine drag mode based on proximity to start/end points
+                if startDiff < 10 { // Within 10 degrees of start
+                    dragState.dragMode = .startPoint
+                    dragState.dragAngle = startAngle
+                    dragState.dragTime = timeFromAngle(startAngle)
+                } else if endDiff < 10 { // Within 10 degrees of end
+                    dragState.dragMode = .endPoint
+                    dragState.dragEndAngle = endAngle
+                    dragState.dragEndTime = timeFromAngle(endAngle)
+                } else {
+                    // Dragging the whole sleep event - store both endpoints
+                    dragState.dragMode = .wholeSleep
+                    dragState.dragAngle = startAngle
+                    dragState.dragTime = timeFromAngle(startAngle)
+                    dragState.dragEndAngle = endAngle
+                    dragState.dragEndTime = timeFromAngle(endAngle)
+                    
+                    // Save the offset from touch point to capsule center
+                    let capsuleCenterAngle = (startAngle + endAngle) / 2
+                    dragState.dragStartAngleOffset = angleDifference(tapAngle, capsuleCenterAngle)
+                }
             } else {
-                // Otherwise, drag the whole sleep event
-                dragState.dragMode = .wholeSleep
+                // Use current event position if no history
+                // Calculate angles
+                let startAngle = angleForTime(sleepEvent.date)
+                let endAngle = angleForTime(sleepEvent.endTime)
+                let tapAngle = angleFromPoint(value.startLocation, geometry: geometry)
+                
+                // Calculate distance from tap to start and end points
+                let startDiff = angleDifference(tapAngle, startAngle)
+                let endDiff = angleDifference(tapAngle, endAngle)
+                
+                // Determine drag mode based on proximity to start/end points
+                if startDiff < 10 { // Within 10 degrees of start
+                    dragState.dragMode = .startPoint
+                    dragState.dragAngle = startAngle
+                    dragState.dragTime = sleepEvent.date
+                } else if endDiff < 10 { // Within 10 degrees of end
+                    dragState.dragMode = .endPoint
+                    dragState.dragEndAngle = endAngle
+                    dragState.dragEndTime = sleepEvent.endTime
+                } else {
+                    // Dragging the whole sleep event
+                    dragState.dragMode = .wholeSleep
+                    dragState.dragAngle = startAngle
+                    dragState.dragTime = sleepEvent.date
+                    dragState.dragEndAngle = endAngle
+                    dragState.dragEndTime = sleepEvent.endTime
+                    
+                    // Save the offset from touch point to capsule center
+                    let capsuleCenterAngle = (startAngle + endAngle) / 2
+                    dragState.dragStartAngleOffset = angleDifference(tapAngle, capsuleCenterAngle)
+                }
             }
             
             // Store the event's original state when drag begins
@@ -1347,10 +1525,6 @@ struct DonutChartView: View {
         
         // Calculate new angle directly from drag position
         let newAngle = angleFromPoint(value.location, geometry: geometry)
-        
-        // IMPORTANT: Use raw angle for dragging without constraining it initially
-        // This ensures smooth dragging around the circle
-        let rawAngle = newAngle
         
         // Get fresh wake and bedtime events for constraints
         let wakeEvent = findWakeEvent()
@@ -1371,7 +1545,7 @@ struct DonutChartView: View {
             switch dragState.dragMode {
             case .startPoint:
                 // Set angle first for smooth dragging
-                dragState.dragAngle = rawAngle
+                dragState.dragAngle = newAngle
                 
                 // Then calculate the time from the angle
                 let newTime = timeFromAngle(dragState.dragAngle)
@@ -1390,7 +1564,7 @@ struct DonutChartView: View {
                 
             case .endPoint:
                 // Set angle first for smooth dragging
-                dragState.dragEndAngle = rawAngle
+                dragState.dragEndAngle = newAngle
                 
                 // Then calculate the time from the angle
                 let newTime = timeFromAngle(dragState.dragEndAngle)
@@ -1408,28 +1582,40 @@ struct DonutChartView: View {
                 dragState.dragEndAngle = angleForTime(dragState.dragEndTime)
                 
             case .wholeSleep:
-                // Set angle first for smooth dragging
-                dragState.dragAngle = rawAngle
+                // For whole capsule dragging, we need to calculate the center position
+                // that should be at the current drag point
                 
-                // Calculate time from angle
-                let newTime = timeFromAngle(dragState.dragAngle)
-                
-                // Calculate the original duration
+                // Calculate the duration to preserve
                 let duration = dragState.originalEndTime.timeIntervalSince(dragState.originalStartTime)
                 
+                // Apply the saved offset to find the intended capsule center angle
+                let adjustedAngle = newAngle
+                
+                // Calculate a new time based on this adjusted angle
+                let newCenterTime = timeFromAngle(adjustedAngle)
+                
+                // Calculate half the duration in seconds
+                let halfDuration = duration / 2
+                
+                // Calculate new start and end times based on the center
+                let newStartTime = newCenterTime.addingTimeInterval(-halfDuration)
+                let newEndTime = newCenterTime.addingTimeInterval(halfDuration)
+                
                 // Apply constraints
-                if newTime < wakeTime {
+                // Start time constraint
+                if newStartTime < wakeTime {
                     dragState.dragTime = wakeTime
-                } else if newTime.addingTimeInterval(duration) > bedTime {
-                    // Handle case where dragging would exceed bed time
-                    // First try to preserve the drag position
-                    dragState.dragTime = newTime
-                    // Then limit the end time to bed time
+                    dragState.dragEndTime = wakeTime.addingTimeInterval(duration)
+                }
+                // End time constraint
+                else if newEndTime > bedTime {
                     dragState.dragEndTime = bedTime
-                } else {
-                    // Normal case - within bounds
-                    dragState.dragTime = newTime
-                    dragState.dragEndTime = newTime.addingTimeInterval(duration)
+                    dragState.dragTime = bedTime.addingTimeInterval(-duration)
+                }
+                // Both within bounds
+                else {
+                    dragState.dragTime = newStartTime
+                    dragState.dragEndTime = newEndTime
                 }
                 
                 // Recalculate angles after applying time constraints
@@ -1440,11 +1626,14 @@ struct DonutChartView: View {
     }
     
     private func handleSleepEventDragEnd(value: DragGesture.Value, event: Event) {
+        
+        guard dataStore.isEditingAllowed(for: date) else { return }
+        
         // Get fresh wake and bedtime constraints before updating
-        let wakeEvent = findWakeEvent()
-        let bedtimeEvent = findBedtimeEvent()
-        let wakeTime = wakeEvent?.date ?? dataStore.baby.wakeTime
-        let bedTime = bedtimeEvent?.date ?? dataStore.baby.bedTime
+        //let wakeEvent = findWakeEvent()
+        //let bedtimeEvent = findBedtimeEvent()
+        //let wakeTime = wakeEvent?.date ?? dataStore.baby.wakeTime
+        //let bedTime = bedtimeEvent?.date ?? dataStore.baby.bedTime
         
         // Recalculate angles based on current constraints
         dragState.dragAngle = angleForTime(dragState.dragTime)
@@ -1456,10 +1645,16 @@ struct DonutChartView: View {
         switch dragState.dragMode {
         case .startPoint:
             updateSleepEventStartTime(event, to: dragState.dragTime)
+            // Save the position
+            DragState.lastKnownPositions[event.id] = (startAngle: dragState.dragAngle, endAngle: dragState.dragEndAngle)
         case .endPoint:
             updateSleepEventEndTime(event, to: dragState.dragEndTime)
+            // Save the position
+            DragState.lastKnownPositions[event.id] = (startAngle: angleForTime(dragState.dragTime), endAngle: dragState.dragEndAngle)
         case .wholeSleep:
             updateSleepEventWhole(event, startTime: dragState.dragTime, endTime: dragState.dragEndTime)
+            // Save the position
+            DragState.lastKnownPositions[event.id] = (startAngle: dragState.dragAngle, endAngle: dragState.dragEndAngle)
         }
         
         // Show confirmation
@@ -1484,37 +1679,77 @@ struct DonutChartView: View {
     }
     
     private func handleFeedEventDragChange(value: DragGesture.Value, event: Event, geometry: GeometryProxy) {
+        
+        guard dataStore.isEditingAllowed(for: date) else { return }
+        
         // Store the event's original state when drag begins
         if !dragState.isDragging, let _ = dataStore.getFeedEvent(id: event.id, for: date) {
             // Use new method to save to undo stack
             dataStore.saveCurrentStateForUndo(eventId: event.id, for: date)
             
+            // Store the initial touch location
+            dragState.dragStartLocation = value.startLocation
+            
+            // Get the last known position if available
+            if let lastPosition = DragState.lastKnownPositions[event.id] {
+                // Start dragging from the last known position
+                dragState.dragAngle = lastPosition.startAngle
+                dragState.dragTime = timeFromAngle(lastPosition.startAngle)
+            } else {
+                // Use current event position if no history
+                dragState.dragAngle = angleForTime(event.date)
+                dragState.dragTime = event.date
+            }
+            
             let generator = UIImpactFeedbackGenerator(style: .light)
             generator.impactOccurred()
         }
         
-        // Calculate new angle from the drag position
+        // Calculate movement delta from initial position
+        let deltaX = value.location.x - dragState.dragStartLocation.x
+        let deltaY = value.location.y - dragState.dragStartLocation.y
+        
+        // Convert delta to angle change (based on circle geometry)
+        let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+        let startVector = CGPoint(x: dragState.dragStartLocation.x - center.x,
+                                  y: dragState.dragStartLocation.y - center.y)
+        let currentVector = CGPoint(x: value.location.x - center.x,
+                                    y: value.location.y - center.y)
+        
+        // Calculate angle between vectors
+        let startAngle = atan2(startVector.y, startVector.x)
+        let currentAngle = atan2(currentVector.y, currentVector.x)
+        let angleDelta = (currentAngle - startAngle) * 180 / .pi
+        
+        // Apply angle change to starting angle
         let newAngle = angleFromPoint(value.location, geometry: geometry)
         let constrainedAngle = constrainAngleToArc(newAngle)
         let newTime = timeFromAngle(constrainedAngle)
         
         // Update UI state
-        //withAnimation(nil) { // No animation during drag movement
+        withAnimation(nil) { // No animation during drag movement
             dragState.isDragging = true
             dragState.draggedEventId = event.id
             dragState.dragMode = .wholeSleep // Default mode for feed events
             dragState.dragAngle = constrainedAngle
             dragState.dragTime = newTime
             dragState.showConfirmationTime = false
-        //}
+        }
         
     }
     
     private func handleFeedEventDragEnd(value: DragGesture.Value, event: Event) {
+        
+        guard dataStore.isEditingAllowed(for: date) else { return }
+        
         // Update the data model
         updateEventTime(event, to: dragState.dragTime)
         
+        // Store the final position for future dragging
+        DragState.lastKnownPositions[event.id] = (startAngle: dragState.dragAngle, endAngle: nil)
+        
         // Show confirmation with the same time
+        // TODO: might be where error coming from
         withAnimation(.easeOut(duration: 0.2)) {
             dragState.isDragging = false
             dragState.showConfirmationTime = true
@@ -1537,31 +1772,83 @@ struct DonutChartView: View {
     }
     
     private func handleTaskEventDragChange(value: DragGesture.Value, event: Event, taskEvent: TaskEvent, geometry: GeometryProxy) {
+        guard dataStore.isEditingAllowed(for: date) else { return }
+        
         // First drag begins - determine drag mode
         if !dragState.isDragging {
             // Store original times for whole task dragging
             dragState.originalStartTime = taskEvent.date
             dragState.originalEndTime = taskEvent.endTime
             
-            // Calculate angles
-            let startAngle = angleForTime(taskEvent.date)
-            let endAngle = angleForTime(taskEvent.endTime)
-            let tapAngle = angleFromPoint(value.startLocation, geometry: geometry)
+            // Store the initial touch location
+            dragState.dragStartLocation = value.startLocation
             
-            // Calculate distance from tap to start and end points
-            let startDiff = angleDifference(tapAngle, startAngle)
-            let endDiff = angleDifference(tapAngle, endAngle)
-            
-            // Determine drag mode based on proximity to start/end points
-            if startDiff < 10 { // Within 10 degrees of start
-                dragState.dragMode = .startPoint
-            } else if endDiff < 10 { // Within 10 degrees of end
-                dragState.dragMode = .endPoint
+            // Get the last known position if available
+            if let lastPosition = DragState.lastKnownPositions[event.id] {
+                // Calculate angles
+                let startAngle = lastPosition.startAngle
+                let endAngle = lastPosition.endAngle ?? angleForTime(taskEvent.endTime)
+                let tapAngle = angleFromPoint(value.startLocation, geometry: geometry)
+                
+                // Calculate distance from tap to start and end points
+                let startDiff = angleDifference(tapAngle, startAngle)
+                let endDiff = angleDifference(tapAngle, endAngle)
+                
+                // Determine drag mode based on proximity to start/end points
+                if startDiff < 10 { // Within 10 degrees of start
+                    dragState.dragMode = .startPoint
+                    dragState.dragAngle = startAngle
+                    dragState.dragTime = timeFromAngle(startAngle)
+                } else if endDiff < 10 { // Within 10 degrees of end
+                    dragState.dragMode = .endPoint
+                    dragState.dragEndAngle = endAngle
+                    dragState.dragEndTime = timeFromAngle(endAngle)
+                } else {
+                    // Otherwise, drag the whole task event
+                    dragState.dragMode = .wholeSleep
+                    dragState.dragAngle = startAngle
+                    dragState.dragTime = timeFromAngle(startAngle)
+                    dragState.dragEndAngle = endAngle
+                    dragState.dragEndTime = timeFromAngle(endAngle)
+                    
+                    // Save the offset from touch point to capsule center
+                    let capsuleCenterAngle = (startAngle + endAngle) / 2
+                    dragState.dragStartAngleOffset = angleDifference(tapAngle, capsuleCenterAngle)
+                }
             } else {
-                // Otherwise, drag the whole task event
-                dragState.dragMode = .wholeSleep // Reusing this enum for tasks
+                // Use current event position if no history
+                // Calculate angles
+                let startAngle = angleForTime(taskEvent.date)
+                let endAngle = angleForTime(taskEvent.endTime)
+                let tapAngle = angleFromPoint(value.startLocation, geometry: geometry)
+                
+                // Calculate distance from tap to start and end points
+                let startDiff = angleDifference(tapAngle, startAngle)
+                let endDiff = angleDifference(tapAngle, endAngle)
+                
+                // Determine drag mode based on proximity to start/end points
+                if startDiff < 10 { // Within 10 degrees of start
+                    dragState.dragMode = .startPoint
+                    dragState.dragAngle = startAngle
+                    dragState.dragTime = taskEvent.date
+                } else if endDiff < 10 { // Within 10 degrees of end
+                    dragState.dragMode = .endPoint
+                    dragState.dragEndAngle = endAngle
+                    dragState.dragEndTime = taskEvent.endTime
+                } else {
+                    // Otherwise, drag the whole sleep event
+                    dragState.dragMode = .wholeSleep
+                    dragState.dragAngle = startAngle
+                    dragState.dragTime = taskEvent.date
+                    dragState.dragEndAngle = endAngle
+                    dragState.dragEndTime = taskEvent.endTime
+                    
+                    // Save the offset from touch point to capsule center
+                    let capsuleCenterAngle = (startAngle + endAngle) / 2
+                    dragState.dragStartAngleOffset = angleDifference(tapAngle, capsuleCenterAngle)
+                }
             }
-
+            
             // Store the event's original state when drag begins
             dataStore.saveCurrentStateForUndo(eventId: event.id, for: date)
             
@@ -1571,10 +1858,6 @@ struct DonutChartView: View {
         
         // Calculate new angle directly from drag position
         let newAngle = angleFromPoint(value.location, geometry: geometry)
-        
-        // IMPORTANT: Use raw angle for dragging without constraining it initially
-        // This ensures smooth dragging around the circle
-        let rawAngle = newAngle
         
         // Get fresh wake and bedtime events for constraints
         let wakeEvent = dataStore.findWakeEvent(for: date)
@@ -1595,7 +1878,7 @@ struct DonutChartView: View {
             switch dragState.dragMode {
             case .startPoint:
                 // Set angle first for smooth dragging
-                dragState.dragAngle = rawAngle
+                dragState.dragAngle = newAngle
                 
                 // Then calculate the time from the angle
                 let newTime = timeFromAngle(dragState.dragAngle)
@@ -1614,7 +1897,7 @@ struct DonutChartView: View {
                 
             case .endPoint:
                 // Set angle first for smooth dragging
-                dragState.dragEndAngle = rawAngle
+                dragState.dragEndAngle = newAngle
                 
                 // Then calculate the time from the angle
                 let newTime = timeFromAngle(dragState.dragEndAngle)
@@ -1632,28 +1915,40 @@ struct DonutChartView: View {
                 dragState.dragEndAngle = angleForTime(dragState.dragEndTime)
                 
             case .wholeSleep: // Reusing the same enum for tasks
-                // Set angle first for smooth dragging
-                dragState.dragAngle = rawAngle
+                // For whole capsule dragging, we need to calculate the center position
+                // that should be at the current drag point
                 
-                // Calculate time from angle
-                let newTime = timeFromAngle(dragState.dragAngle)
-                
-                // Calculate the original duration
+                // Calculate the duration to preserve
                 let duration = dragState.originalEndTime.timeIntervalSince(dragState.originalStartTime)
                 
+                // Apply the saved offset to find the intended capsule center angle
+                let adjustedAngle = newAngle
+                
+                // Calculate a new time based on this adjusted angle
+                let newCenterTime = timeFromAngle(adjustedAngle)
+                
+                // Calculate half the duration in seconds
+                let halfDuration = duration / 2
+                
+                // Calculate new start and end times based on the center
+                let newStartTime = newCenterTime.addingTimeInterval(-halfDuration)
+                let newEndTime = newCenterTime.addingTimeInterval(halfDuration)
+                
                 // Apply constraints
-                if newTime < wakeTime {
+                // Start time constraint
+                if newStartTime < wakeTime {
                     dragState.dragTime = wakeTime
-                } else if newTime.addingTimeInterval(duration) > bedTime {
-                    // Handle case where dragging would exceed bed time
-                    // First try to preserve the drag position
-                    dragState.dragTime = newTime
-                    // Then limit the end time to bed time
+                    dragState.dragEndTime = wakeTime.addingTimeInterval(duration)
+                }
+                // End time constraint
+                else if newEndTime > bedTime {
                     dragState.dragEndTime = bedTime
-                } else {
-                    // Normal case - within bounds
-                    dragState.dragTime = newTime
-                    dragState.dragEndTime = newTime.addingTimeInterval(duration)
+                    dragState.dragTime = bedTime.addingTimeInterval(-duration)
+                }
+                // Both within bounds
+                else {
+                    dragState.dragTime = newStartTime
+                    dragState.dragEndTime = newEndTime
                 }
                 
                 // Recalculate angles after applying time constraints
@@ -1664,11 +1959,12 @@ struct DonutChartView: View {
     }
     
     private func handleTaskEventDragEnd(value: DragGesture.Value, event: Event) {
+        
+        guard dataStore.isEditingAllowed(for: date) else { return }
+        
         // Get fresh wake and bedtime constraints before updating
         let wakeEvent = dataStore.findWakeEvent(for: date)
         let bedtimeEvent = dataStore.findBedtimeEvent(for: date)
-        let wakeTime = wakeEvent?.date ?? dataStore.baby.wakeTime
-        let bedTime = bedtimeEvent?.date ?? dataStore.baby.bedTime
         
         // Recalculate angles based on current constraints
         dragState.dragAngle = angleForTime(dragState.dragTime)
@@ -1680,10 +1976,16 @@ struct DonutChartView: View {
         switch dragState.dragMode {
         case .startPoint:
             updateTaskEventStartTime(event, to: dragState.dragTime)
+            // Store the final position for future dragging
+            DragState.lastKnownPositions[event.id] = (startAngle: dragState.dragAngle, endAngle: angleForTime(dragState.dragEndTime))
         case .endPoint:
             updateTaskEventEndTime(event, to: dragState.dragEndTime)
-        case .wholeSleep: // Reusing the same enum for tasks
+            // Store the final position for future dragging
+            DragState.lastKnownPositions[event.id] = (startAngle: angleForTime(dragState.dragTime), endAngle: dragState.dragEndAngle)
+        case .wholeSleep: // Reusing this enum for tasks
             updateTaskEventWhole(event, startTime: dragState.dragTime, endTime: dragState.dragEndTime)
+            // Store the final position for future dragging
+            DragState.lastKnownPositions[event.id] = (startAngle: dragState.dragAngle, endAngle: dragState.dragEndAngle)
         }
         
         // Show confirmation
@@ -1700,11 +2002,15 @@ struct DonutChartView: View {
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 if dragState.draggedEventId == event.id {
-                    //dragState.draggedEventId = nil
                     dragState.reset()
                 }
             }
         }
+    }
+    
+    // Add a method to clear positions when events are deleted
+    private func clearPositionCache(for eventId: UUID) {
+        DragState.lastKnownPositions.removeValue(forKey: eventId)
     }
     
     // MARK: - Helper Functions
@@ -1727,7 +2033,7 @@ struct DonutChartView: View {
     
     private func formatTime(_ date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.timeStyle = .medium
+        formatter.timeStyle = .short
         return formatter.string(from: date)
     }
     
@@ -1826,8 +2132,6 @@ struct DonutChartView: View {
     
     // Calculate time from angle position
     private func timeFromAngle(_ angle: Double) -> Date {
-        //print("Starting timeFromAngle calculation for angle: \(angle)°")
-        
         let calendar = Calendar.current
         
         // Get wake and bedtime
@@ -1835,11 +2139,6 @@ struct DonutChartView: View {
         let bedtimeEvent = findBedtimeEvent()
         let wakeTime = wakeEvent?.date ?? dataStore.baby.wakeTime
         let bedTime = bedtimeEvent?.date ?? dataStore.baby.bedTime
-        
-        //print("Using wake time: \(formatTime(wakeTime)), bed time: \(formatTime(bedTime))")
-        
-        // Debug the input values
-        //print("ANGLE TO TIME: Input angle=\(angle), wakeTime=\(formatTime(wakeTime)), bedTime=\(formatTime(bedTime))")
         
         let wakeComponents = calendar.dateComponents([.hour, .minute], from: wakeTime)
         let bedComponents = calendar.dateComponents([.hour, .minute], from: bedTime)
@@ -1849,13 +2148,25 @@ struct DonutChartView: View {
             return Date() // Default if can't calculate
         }
         
-        let wakeTimeMinutes = wakeHour * 60 + wakeMinute
-        let bedTimeMinutes = bedHour * 60 + bedMinute
+        // Special handling for midnight bedtime (both 00:00 and 24:00)
+        let isMidnightBedtime = (bedHour == 0 && bedMinute == 0) || (bedHour == 24 && bedMinute == 0)
         
-        // Handle case where bedtime is after midnight
-        let totalWakingMinutes = bedTimeMinutes > wakeTimeMinutes
-        ? bedTimeMinutes - wakeTimeMinutes
-        : (24 * 60 - wakeTimeMinutes) + bedTimeMinutes
+        // Adjust bedtime minutes for calculations
+        let bedTimeMinutes = bedHour * 60 + bedMinute
+        let wakeTimeMinutes = wakeHour * 60 + wakeMinute
+        
+        // Handle special case for midnight bedtime
+        let totalWakingMinutes: Int
+        if isMidnightBedtime {
+            // For midnight bedtime, calculate as if it's 23:59
+            totalWakingMinutes = ((23 * 60) + 59) - wakeTimeMinutes
+        } else if bedTimeMinutes > wakeTimeMinutes {
+            // Normal same-day case
+            totalWakingMinutes = bedTimeMinutes - wakeTimeMinutes
+        } else {
+            // Overnight case
+            totalWakingMinutes = (24 * 60 - wakeTimeMinutes) + bedTimeMinutes
+        }
         
         // Calculate the total angle sweep of the arc
         let totalAngleSweep = (arcEndAngle - arcStartAngle + 360).truncatingRemainder(dividingBy: 360)
@@ -1886,19 +2197,13 @@ struct DonutChartView: View {
         dateComponents.minute = minutes
         
         // If we're past midnight, adjust the day
-        if bedTimeMinutes < wakeTimeMinutes && hours < wakeHour {
+        if isMidnightBedtime && hours >= 0 && hours < wakeHour {
+            dateComponents.day = (dateComponents.day ?? 0) + 1
+        } else if !isMidnightBedtime && bedTimeMinutes < wakeTimeMinutes && hours < wakeHour {
             dateComponents.day = (dateComponents.day ?? 0) + 1
         }
         
-        let resultTime = calendar.date(from: dateComponents) ?? Date()
-        
-        // Debug the calculation
-        //print("ANGLE TO TIME: angle=\(angle), normalized=\(normalizedTime), minutesSinceWake=\(minutesSinceWake)")
-        //print("ANGLE TO TIME: Result hours=\(hours), minutes=\(minutes), time=\(formatTime(resultTime))")
-        
-        let resultDate = calendar.date(from: dateComponents) ?? Date()
-        //print("Final calculated time: \(formatTime(resultDate))")
-        return resultDate
+        return calendar.date(from: dateComponents) ?? Date()
     }
     
     private func setupObserversForWakeTimeBedTimeChanges() {
@@ -1973,13 +2278,24 @@ struct DonutChartView: View {
             return arcStartAngle // Default if can't calculate
         }
         
+        // Special handling for midnight bedtime (both 00:00 and 24:00)
+        let isMidnightBedtime = (bedHour == 0 && bedMinute == 0) || (bedHour == 24 && bedMinute == 0)
+        
         let wakeTimeMinutes = wakeHour * 60 + wakeMinute
         let bedTimeMinutes = bedHour * 60 + bedMinute
         
-        // Handle case where bedtime is after midnight
-        let totalWakingMinutes = bedTimeMinutes > wakeTimeMinutes
-        ? bedTimeMinutes - wakeTimeMinutes
-        : (24 * 60 - wakeTimeMinutes) + bedTimeMinutes
+        // Handle special case for midnight bedtime
+        let totalWakingMinutes: Int
+        if isMidnightBedtime {
+            // For midnight bedtime, calculate as if it's 23:59
+            totalWakingMinutes = ((23 * 60) + 59) - wakeTimeMinutes
+        } else if bedTimeMinutes > wakeTimeMinutes {
+            // Normal same-day case
+            totalWakingMinutes = bedTimeMinutes - wakeTimeMinutes
+        } else {
+            // Overnight case
+            totalWakingMinutes = (24 * 60 - wakeTimeMinutes) + bedTimeMinutes
+        }
         
         let hourMinute = calendar.dateComponents([.hour, .minute], from: time)
         guard let hour = hourMinute.hour, let minute = hourMinute.minute else {
@@ -1991,7 +2307,19 @@ struct DonutChartView: View {
         // Calculate minutes since wake time, handling wrap-around at midnight if needed
         let minutesSinceWake: Int
         
-        if bedTimeMinutes > wakeTimeMinutes {
+        if isMidnightBedtime {
+            // Special midnight bedtime handling
+            if timeMinutes >= wakeTimeMinutes && timeMinutes <= (23 * 60 + 59) {
+                minutesSinceWake = timeMinutes - wakeTimeMinutes
+            } else {
+                // Time is outside the wake window, clamp to nearest valid time
+                if timeMinutes < wakeTimeMinutes {
+                    minutesSinceWake = 0 // Clamp to wake time
+                } else {
+                    minutesSinceWake = totalWakingMinutes // Clamp to bedtime (23:59)
+                }
+            }
+        } else if bedTimeMinutes > wakeTimeMinutes {
             // No overnight case
             if timeMinutes >= wakeTimeMinutes && timeMinutes <= bedTimeMinutes {
                 minutesSinceWake = timeMinutes - wakeTimeMinutes
@@ -2522,6 +2850,12 @@ struct DonutChartView: View {
     }
     
     private func createDefaultWakeEvent() {
+        
+        if !dataStore.isEditingAllowed(for: date) {
+            showLockFeedback()
+            return
+        }
+        
         let calendar = Calendar.current
         var wakeTimeComponents = calendar.dateComponents([.year, .month, .day], from: date)
         let babyWakeTimeComponents = calendar.dateComponents([.hour, .minute], from: dataStore.baby.wakeTime)
@@ -2545,6 +2879,12 @@ struct DonutChartView: View {
     }
     
     private func createDefaultBedtimeEvent() {
+        
+        if !dataStore.isEditingAllowed(for: date) {
+            showLockFeedback()
+            return
+        }
+        
         let calendar = Calendar.current
         var bedTimeComponents = calendar.dateComponents([.year, .month, .day], from: date)
         let babyBedTimeComponents = calendar.dateComponents([.hour, .minute], from: dataStore.baby.bedTime)
@@ -2597,6 +2937,17 @@ struct DonutChartView: View {
                     currentActiveEvent = nil
                 }
             }
+        }
+    }
+    
+    private func showLockFeedback() {
+        // Provide haptic feedback
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.warning)
+        
+        // Show lock overlay animation
+        withAnimation(.spring()) {
+            showLockAnimation = true
         }
     }
 }
@@ -2743,6 +3094,34 @@ struct TaskArcCapsule: View {
 }
 
 // MARK: - Helper Components
+
+struct LockFeedbackOverlay: View {
+    @Binding var isVisible: Bool
+    
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.black.opacity(0.4))
+                .frame(width: 80, height: 80)
+            
+            Image(systemName: "lock.fill")
+                .font(.system(size: 30))
+                .foregroundColor(.white)
+        }
+        .opacity(isVisible ? 1.0 : 0.0)
+        .scaleEffect(isVisible ? 1.0 : 0.5)
+        .onChange(of: isVisible) { _, newValue in
+            if newValue {
+                // Auto-hide after 1 second
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        isVisible = false
+                    }
+                }
+            }
+        }
+    }
+}
 
 // Shared base arc capsule shape
 struct ArcCapsuleShape: Shape {
@@ -2924,6 +3303,8 @@ struct PreciseArcStroke: UIViewRepresentable {
     var lineWidth: CGFloat
     var color: Color
     var onDoubleTap: ((Double) -> Void)
+    var date: Date
+    @EnvironmentObject var dataStore: DataStore
     
     func makeUIView(context: Context) -> ArcTouchView {
         let view = ArcTouchView(
@@ -2935,6 +3316,8 @@ struct PreciseArcStroke: UIViewRepresentable {
         )
         view.onDoubleTap = onDoubleTap
         view.clipsToBounds = false
+        view.date = date
+        view.dataStore = dataStore  // Pass directly now
         return view
     }
     
@@ -2945,6 +3328,8 @@ struct PreciseArcStroke: UIViewRepresentable {
         uiView.lineWidth = lineWidth
         uiView.color = UIColor(color)
         uiView.onDoubleTap = onDoubleTap
+        uiView.date = date
+        uiView.dataStore = dataStore  // Update directly
         uiView.setNeedsDisplay()
     }
     
@@ -2956,6 +3341,8 @@ struct PreciseArcStroke: UIViewRepresentable {
         var lineWidth: CGFloat
         var color: UIColor
         var onDoubleTap: ((Double) -> Void)?
+        var date: Date? // Add date property
+        weak var dataStore: DataStore? // Add dataStore property
         
         init(startAngle: Double, endAngle: Double, clockwise: Bool, lineWidth: CGFloat, color: UIColor) {
             self.startAngle = startAngle
@@ -2963,6 +3350,8 @@ struct PreciseArcStroke: UIViewRepresentable {
             self.clockwise = clockwise
             self.lineWidth = lineWidth
             self.color = color
+            self.date = nil // Initialize with nil
+            self.dataStore = nil // Initialize with nil
             super.init(frame: .zero)
             
             // Setup gesture recognizer
@@ -2979,6 +3368,14 @@ struct PreciseArcStroke: UIViewRepresentable {
         }
         
         @objc func handleDoubleTap(_ gestureRecognizer: UITapGestureRecognizer) {
+            // Guard against tap handling when editing is disabled
+            if let dataStore = self.dataStore, let date = self.date, !dataStore.isEditingAllowed(for: date) {
+                // Provide feedback when attempting to interact with locked past date
+                let generator = UINotificationFeedbackGenerator()
+                generator.notificationOccurred(.warning)
+                return
+            }
+            
             let tapLocation = gestureRecognizer.location(in: self)
             let center = CGPoint(x: bounds.midX, y: bounds.midY)
             
@@ -2993,7 +3390,6 @@ struct PreciseArcStroke: UIViewRepresentable {
                 angle += 360
             }
             
-            //print("Precise tap detected at angle: \(angle)°")
             onDoubleTap?(angle)
         }
         

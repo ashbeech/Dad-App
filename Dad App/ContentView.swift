@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var filteredEventTypes: [EventType]? = nil
     @State private var showingNapActionSheet = false
     @State private var initialEventTime: Date = Date()
+    @State private var showingLockAlert: Bool = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -46,7 +47,7 @@ struct ContentView: View {
                 selectedEvent: $selectedEvent,
                 filteredEventTypes: $filteredEventTypes,
                 onAddEventTapped: { tappedTime in
-                    // Save the tapped time for use in AddEventView
+                    // Reset initialEventTime with each tap
                     initialEventTime = tappedTime
                     
                     // Log for debugging
@@ -67,13 +68,18 @@ struct ContentView: View {
                 .padding(.vertical, 4)
             
             // Event list - expanded to take more space
-            EventListView(events: events, selectedEvent: $selectedEvent)
+            EventListView(events: events, date: currentDate, selectedEvent: $selectedEvent)
                 .frame(maxHeight: .infinity)
                 .environmentObject(dataStore)
             
             // Add button - positioned closer to bottom
             Button(action: {
-                showingAddSheet = true
+                if dataStore.isEditingAllowed(for: currentDate) {
+                    showingAddSheet = true
+                } else {
+                    // Show feedback when attempting to add to a locked past date
+                    showLockFeedback()
+                }
             }) {
                 ZStack {
                     Circle()
@@ -86,6 +92,24 @@ struct ContentView: View {
                 }
             }
             .padding(.bottom, 8)
+        }
+        .sheet(isPresented: $showingAddSheet) {
+            AddEventView(date: currentDate, initialTime: initialEventTime)
+                .environmentObject(dataStore)
+        }
+        .sheet(item: $selectedEvent) { event in
+            // Check if editing is allowed before presenting edit sheet
+            if dataStore.isEditingAllowed(for: currentDate) {
+                EditEventView(event: event, date: currentDate)
+                    .environmentObject(dataStore)
+            }
+        }
+        .alert(isPresented: $showingLockAlert) {
+            Alert(
+                title: Text("Past Date Locked"),
+                message: Text("This date is in the past. Tap the padlock icon in the center to enable editing."),
+                dismissButton: .default(Text("OK"))
+            )
         }
         .sheet(isPresented: $showingAddSheet) {
             AddEventView(date: currentDate, initialTime: initialEventTime)
@@ -132,6 +156,23 @@ struct ContentView: View {
                 dataStore.generateDailySchedule(for: newDate)
             }
         }
+    }
+    
+    // Helper to check if a date is in the past
+    private func isPastDate(_ date: Date) -> Bool {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let checkDate = calendar.startOfDay(for: date)
+        return checkDate < today
+    }
+    
+    private func showLockFeedback() {
+        // Provide haptic feedback
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.warning)
+        
+        // Show alert explaining the lock
+        showingLockAlert = true
     }
     
     internal func filteredEvents(from events: [Event]) -> [Event] {

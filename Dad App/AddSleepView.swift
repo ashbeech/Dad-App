@@ -35,17 +35,13 @@ struct AddSleepView: View {
         
         // Extract year, month, day from date and hour, minute from initialTime
         var dateComponents = calendar.dateComponents([.year, .month, .day], from: date)
-        let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: initialTime)
+        let timeComponents = calendar.dateComponents([.hour, .minute], from: initialTime)
         
         // Combine them
         dateComponents.hour = timeComponents.hour
         dateComponents.minute = timeComponents.minute
-        dateComponents.second = timeComponents.second
         
         let combinedDate = calendar.date(from: dateComponents) ?? initialTime
-        
-        // Debug logging
-        //print("AddSleepView initializing with time: \(formatTime(combinedDate))")
         
         _startTime = State(initialValue: combinedDate)
         
