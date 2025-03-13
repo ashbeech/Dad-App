@@ -250,9 +250,6 @@ struct DonutChartView: View {
                     self.enhancedTimerSetup()
                 }
                 
-                // Check for any ongoing naps and set as active event
-                checkForOngoingNaps()
-                
                 // Setup the enhanced timer
                 enhancedTimerSetup()
                 
@@ -264,6 +261,9 @@ struct DonutChartView: View {
                         refreshTrigger.toggle()
                     }
                 }
+                
+                // Check for any ongoing naps and set as active event
+                checkForOngoingNaps()
             }
             .onDisappear {
                 // Stop the timer
@@ -2925,15 +2925,17 @@ struct DonutChartView: View {
             // Get all ongoing sleep events for today
             let ongoingNaps = dataStore.getOngoingSleepEvents(for: date).filter { $0.sleepType == .nap }
             
+            // Add debug output
+            print("Found \(ongoingNaps.count) ongoing naps")
+            
             // If there's an ongoing nap, set it as the active event
             if let ongoingNap = ongoingNaps.first {
+                print("Setting currentActiveEvent to nap: \(ongoingNap.id)")
                 currentActiveEvent = ActiveEvent.from(sleepEvent: ongoingNap)
-                
-                // Log for debugging
-                //print("Found ongoing nap: \(ongoingNap.id)")
             } else {
                 // Clear any existing active event if there are no ongoing naps
                 if currentActiveEvent != nil {
+                    print("Clearing currentActiveEvent")
                     currentActiveEvent = nil
                 }
             }
