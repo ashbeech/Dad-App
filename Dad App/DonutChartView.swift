@@ -149,20 +149,20 @@ struct DonutChartView: View {
                 timeMarkersView(geometry: geometry)
                     .zIndex(2) // Just above base arc
                 
-                // Time label during drag
-                dragTimeLabelsView(geometry: geometry)
-                    .zIndex(200) // Always on top
-                
-                // Confirmation time label after drop
-                confirmationTimeLabelsView(geometry: geometry)
-                    .zIndex(200) // Always on top
-                
                 // CRITICAL: Always render the NowFocusView in the center
                 NowFocusView(currentActiveEvent: $currentActiveEvent, date: date)
                     .frame(width: geometry.size.width * 0.6, height: geometry.size.height * 0.6)
                     .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                     .zIndex(300) // Highest z-index - always on top
                     .environmentObject(dataStore)
+                
+                // Time label during drag
+                dragTimeLabelsView(geometry: geometry)
+                    .zIndex(333)
+                
+                // Confirmation time label after drop
+                confirmationTimeLabelsView(geometry: geometry)
+                    .zIndex(233)
                 
                 // Hidden element for refreshing view
                 Color.clear
