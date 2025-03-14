@@ -186,58 +186,11 @@ struct DonutChartView: View {
                 lastWakeTime = dataStore.baby.wakeTime
                 lastBedTime = dataStore.baby.bedTime
                 
-                /*
-                 // Add observer for when app returns to foreground to reset timer
-                 NotificationCenter.default.addObserver(
-                 forName: UIApplication.didBecomeActiveNotification,
-                 object: nil,
-                 queue: .main
-                 ) { _ in
-                 // CRITICAL FIX: Reset and restart timer when app becomes active
-                 print("App became active - resetting timer and updating UI")
-                 self.enhancedTimerSetup()
-                 
-                 // CRITICAL FIX: Force immediate time line update and UI refresh
-                 if Calendar.current.isDateInToday(self.date) {
-                 if let currentTime = self.getCurrentTimeForToday() {
-                 self.currentTimeAngle = self.angleForTime(currentTime)
-                 self.forceRedraw = UUID()
-                 self.refreshTrigger.toggle()
-                 }
-                 }
-                 
-                 // CRITICAL FIX: Also check for ongoing naps when app returns to foreground
-                 self.checkForOngoingNaps()
-                 }*/
-                
-                /*
-                 // CRITICAL FIX: Also observe our custom AppLaunched notification
-                 NotificationCenter.default.addObserver(
-                 forName: NSNotification.Name("AppLaunched"),
-                 object: nil,
-                 queue: .main
-                 ) { _ in
-                 // Similar behavior as app activation but with a guarantee this is a fresh launch
-                 print("App launched - initializing timer and UI")
-                 self.enhancedTimerSetup()
-                 
-                 // Force time line update with guaranteed refresh
-                 if Calendar.current.isDateInToday(self.date) {
-                 if let currentTime = self.getCurrentTimeForToday() {
-                 self.currentTimeAngle = self.angleForTime(currentTime)
-                 // Use stronger UI refresh mechanism
-                 DispatchQueue.main.async {
-                 self.forceRedraw = UUID()
-                 self.refreshTrigger.toggle()
-                 }
-                 }
-                 }
-                 
-                 // Check for ongoing naps with guaranteed refresh
-                 DispatchQueue.main.async {
-                 self.checkForOngoingNaps()
-                 }
-                 }*/
+                // Calculate correct time angle IMMEDIATELY on appear
+                // This is critical to avoid the initial jump
+                if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday() {
+                    currentTimeAngle = angleForTime(currentTime)
+                }
                 
                 // Add notification observer for past date editing state changes
                 NotificationCenter.default.addObserver(
@@ -797,21 +750,35 @@ struct DonutChartView: View {
         timer = nil
         
         // Reset the current time angle immediately for today's date
-        if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday() {
-            currentTimeAngle = angleForTime(currentTime)
-            // Force UI update
-            refreshTrigger.toggle()
+        // Calculate the current time angle ONCE before setting up the timer
+        // This ensures we have the correct angle before the first render
+        if Calendar.current.isDateInToday(date) {
+            if let currentTime = getCurrentTimeForToday() {
+                // Use transaction to avoid animation on initial setup
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    currentTimeAngle = angleForTime(currentTime)
+                    // Force UI update
+                    refreshTrigger.toggle()
+                }
+            }
         }
         
         // Create a new timer with more reliable timing - every 15 seconds is enough for smooth updates
-        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in
+        // Create a new timer with more reliable timing - every 30 seconds is enough
+        // Using 30 instead of 15 reduces unnecessary updates
+        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in            
             if Calendar.current.isDateInToday(self.date) {
                 if let currentTime = self.getCurrentTimeForToday() {
-                    // Use transaction to avoid animation conflicts
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        self.currentTimeAngle = self.angleForTime(currentTime)
+                    // Calculate new angle
+                    let newAngle = self.angleForTime(currentTime)
+                    
+                    // Only update if the angle has changed significantly (> 0.5 degrees)
+                    // This prevents unnecessary UI updates
+                    if abs(newAngle - self.currentTimeAngle) > 0.5 {
+                        // Allow animation for smooth transitions
+                        self.currentTimeAngle = newAngle
                         // Force UI update with toggle
                         self.refreshTrigger.toggle()
                     }
@@ -861,9 +828,9 @@ struct DonutChartView: View {
         let isBedtimeAfterMidnight = bedMinutes < wakeMinutes
         
         // Calculate total waking minutes
-        let totalWakingMinutes = isBedtimeAfterMidnight
+        /*let totalWakingMinutes = isBedtimeAfterMidnight
         ? (24 * 60 - wakeMinutes) + bedMinutes
-        : bedMinutes - wakeMinutes
+        : bedMinutes - wakeMinutes*/
         
         //print("Total waking minutes: \(totalWakingMinutes), isBedtimeAfterMidnight: \(isBedtimeAfterMidnight)")
         
