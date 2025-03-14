@@ -291,6 +291,18 @@ struct AddSleepView: View {
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
         
+        // Post notification to immediately set this as active event
+        if !showEndTime && startImmediately {
+            // Create active event from this sleep event
+            let activeEvent = ActiveEvent.from(sleepEvent: sleepEvent)
+            
+            // Post notification with the active event
+            NotificationCenter.default.post(
+                name: NSNotification.Name("SetActiveNap"),
+                object: activeEvent
+            )
+        }
+        
         presentationMode.wrappedValue.dismiss()
     }
 }

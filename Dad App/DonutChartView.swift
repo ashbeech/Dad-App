@@ -141,10 +141,6 @@ struct DonutChartView: View {
                         .zIndex(renderData.zIndex)
                 }
                 
-                // Draw the current time marker if within waking hours AND it's today
-                currentTimeMarkerView(geometry: geometry)
-                    .zIndex(150) // Always on top
-                
                 // Time markers for better readability
                 timeMarkersView(geometry: geometry)
                     .zIndex(2) // Just above base arc
@@ -163,6 +159,10 @@ struct DonutChartView: View {
                 // Confirmation time label after drop
                 confirmationTimeLabelsView(geometry: geometry)
                     .zIndex(333)
+                
+                // Draw the current time marker if within waking hours AND it's today
+                currentTimeMarkerView(geometry: geometry)
+                    .zIndex(666)
                 
                 // Hidden element for refreshing view
                 Color.clear
@@ -185,6 +185,59 @@ struct DonutChartView: View {
                 // Set initial values for time tracking
                 lastWakeTime = dataStore.baby.wakeTime
                 lastBedTime = dataStore.baby.bedTime
+                
+                /*
+                 // Add observer for when app returns to foreground to reset timer
+                 NotificationCenter.default.addObserver(
+                 forName: UIApplication.didBecomeActiveNotification,
+                 object: nil,
+                 queue: .main
+                 ) { _ in
+                 // CRITICAL FIX: Reset and restart timer when app becomes active
+                 print("App became active - resetting timer and updating UI")
+                 self.enhancedTimerSetup()
+                 
+                 // CRITICAL FIX: Force immediate time line update and UI refresh
+                 if Calendar.current.isDateInToday(self.date) {
+                 if let currentTime = self.getCurrentTimeForToday() {
+                 self.currentTimeAngle = self.angleForTime(currentTime)
+                 self.forceRedraw = UUID()
+                 self.refreshTrigger.toggle()
+                 }
+                 }
+                 
+                 // CRITICAL FIX: Also check for ongoing naps when app returns to foreground
+                 self.checkForOngoingNaps()
+                 }*/
+                
+                /*
+                 // CRITICAL FIX: Also observe our custom AppLaunched notification
+                 NotificationCenter.default.addObserver(
+                 forName: NSNotification.Name("AppLaunched"),
+                 object: nil,
+                 queue: .main
+                 ) { _ in
+                 // Similar behavior as app activation but with a guarantee this is a fresh launch
+                 print("App launched - initializing timer and UI")
+                 self.enhancedTimerSetup()
+                 
+                 // Force time line update with guaranteed refresh
+                 if Calendar.current.isDateInToday(self.date) {
+                 if let currentTime = self.getCurrentTimeForToday() {
+                 self.currentTimeAngle = self.angleForTime(currentTime)
+                 // Use stronger UI refresh mechanism
+                 DispatchQueue.main.async {
+                 self.forceRedraw = UUID()
+                 self.refreshTrigger.toggle()
+                 }
+                 }
+                 }
+                 
+                 // Check for ongoing naps with guaranteed refresh
+                 DispatchQueue.main.async {
+                 self.checkForOngoingNaps()
+                 }
+                 }*/
                 
                 // Add notification observer for past date editing state changes
                 NotificationCenter.default.addObserver(
@@ -1305,7 +1358,7 @@ struct DonutChartView: View {
                             .background(Color.black.opacity(0.7))
                             .cornerRadius(4)
                             .position(pointOutsideDonut(angle: dragState.dragAngle, geometry: geometry, offset: -35))
-                            
+                        
                     case .endPoint:
                         Text(formatTime(dragState.dragEndTime))
                             .font(.caption)
@@ -1314,7 +1367,7 @@ struct DonutChartView: View {
                             .background(Color.black.opacity(0.7))
                             .cornerRadius(4)
                             .position(pointOutsideDonut(angle: dragState.dragEndAngle, geometry: geometry, offset: -35))
-                            
+                        
                     case .wholeSleep:
                         // Check if this is a capsule-style event with both start and end times
                         if let event = events.first(where: { $0.id == dragState.draggedEventId }) {
@@ -1374,7 +1427,7 @@ struct DonutChartView: View {
                                 .cornerRadius(4)
                                 .position(pointOutsideDonut(angle: dragState.dragAngle, geometry: geometry, offset: -35))
                                 .transition(.opacity)
-                                
+                            
                         case .endPoint:
                             Text(formatTime(dragState.dragEndTime))
                                 .font(.caption)
@@ -1384,7 +1437,7 @@ struct DonutChartView: View {
                                 .cornerRadius(4)
                                 .position(pointOutsideDonut(angle: dragState.dragEndAngle, geometry: geometry, offset: -35))
                                 .transition(.opacity)
-                                
+                            
                         case .wholeSleep:
                             // Consistent display for capsule-style events (sleep and task)
                             if event.type == .sleep || event.type == .task {

@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var showingNapActionSheet = false
     @State private var initialEventTime: Date = Date()
     @State private var showingLockAlert: Bool = false
+    @State private var forceRefreshID = UUID()
     
     var body: some View {
         VStack(spacing: 0) {
@@ -149,6 +150,68 @@ struct ContentView: View {
             if dataStore.getEvents(for: currentDate).isEmpty {
                 dataStore.generateDailySchedule(for: currentDate)
             }
+            
+            // CRITICAL FIX: Watch for app launch notification
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("AppLaunched"),
+                object: nil,
+                queue: .main
+            ) { _ in
+                print("ContentView detected app launch")
+                
+                // Check if we need to update to today's date
+                let now = Date()
+                if !Calendar.current.isDateInToday(currentDate) {
+                    // If current selected date isn't today, update it
+                    withAnimation {
+                        currentDate = now
+                    }
+                }
+                
+                // CRITICAL FIX: Ensure today has events generated
+                dataStore.ensureTodayScheduleExists()
+                
+                // Force a complete UI refresh
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.forceRefreshID = UUID()
+                }
+            }
+            
+            // CRITICAL FIX: Also observe for applicationDidBecomeActive
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                print("ContentView detected app became active")
+                
+                // If we're past wake time for today, ensure we're displaying today
+                let now = Date()
+                let calendar = Calendar.current
+                
+                // Get current time components
+                let nowComponents = calendar.dateComponents([.hour, .minute], from: now)
+                let nowMinutes = (nowComponents.hour ?? 0) * 60 + (nowComponents.minute ?? 0)
+                
+                // Get wake time components
+                let wakeComponents = calendar.dateComponents([.hour, .minute], from: dataStore.baby.wakeTime)
+                let wakeMinutes = (wakeComponents.hour ?? 0) * 60 + (wakeComponents.minute ?? 0)
+                
+                // If it's after wake time and we're not showing today, update to today
+                if nowMinutes >= wakeMinutes && !Calendar.current.isDateInToday(currentDate) {
+                    withAnimation {
+                        currentDate = now
+                    }
+                }
+                
+                // Ensure today has events
+                dataStore.ensureTodayScheduleExists()
+                
+                // Force UI refresh
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    self.forceRefreshID = UUID()
+                }
+            }
         }
         .onChange(of: currentDate) { _, newDate in
             // Generate daily events when date changes, but only if no events exist
@@ -156,6 +219,8 @@ struct ContentView: View {
                 dataStore.generateDailySchedule(for: newDate)
             }
         }
+        // CRITICAL FIX: Add ID to force refresh when needed
+        .id(forceRefreshID)
     }
     
     // Helper to check if a date is in the past

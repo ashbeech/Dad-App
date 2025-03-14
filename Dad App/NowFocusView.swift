@@ -17,6 +17,7 @@ struct NowFocusView: View {
     @State private var localIsPaused: Bool = false
     @State private var displayTime: String = "00:00"
     @State private var timerID: UUID = UUID()
+    @State private var viewRefreshTrigger = UUID()
     
     // Use shared timer manager instead of local timer
     @StateObject private var timerManager = NapTimerManager.shared
@@ -70,7 +71,7 @@ struct NowFocusView: View {
                 }
                 .padding()
                 .onAppear {
-                    //print("NowFocusView appeared with activeEvent")
+                    print("NowFocusView appeared with activeEvent")
                     // Initialize state
                     localIsPaused = sleepEvent.isPaused
                     updateDisplayTime(sleepEvent: sleepEvent)
@@ -86,10 +87,26 @@ struct NowFocusView: View {
                            let updatedSleepEvent = dataStore.getSleepEvent(id: activeEvent.id, for: date) {
                             // Update our local state
                             localIsPaused = updatedSleepEvent.isPaused
-                            //print("NowFocusView received pause change: isPaused=\(localIsPaused)")
+                            print("NowFocusView received pause change: isPaused=\(localIsPaused)")
                             
                             // Update duration immediately and force refresh
                             updateDisplayTime(sleepEvent: updatedSleepEvent)
+                            timerID = UUID()
+                        }
+                    }
+                    
+                    // Listen for new active nap notifications
+                    NotificationCenter.default.addObserver(
+                        forName: NSNotification.Name("SetActiveNap"),
+                        object: nil,
+                        queue: .main
+                    ) { notification in
+                        if let newActiveEvent = notification.object as? ActiveEvent {
+                            // Set this as the current active event
+                            currentActiveEvent = newActiveEvent
+                            
+                            // Force immediate refresh
+                            viewRefreshTrigger = UUID()
                             timerID = UUID()
                         }
                     }
@@ -103,16 +120,22 @@ struct NowFocusView: View {
                         updateDisplayTime(sleepEvent: updatedSleepEvent)
                     }
                 }
+                // CRITICAL FIX: Add ID using the viewRefreshTrigger to ensure view updates
+                .id("nap-controls-\(viewRefreshTrigger)")
                 
             } else if Calendar.current.isDateInToday(date) && !isAfterBedtime() {
                 // Show the next upcoming event when no active event and it's today
                 NextEventInfoView(date: date)
                     .environmentObject(dataStore)
+                    // CRITICAL FIX: Add ID using the viewRefreshTrigger to ensure view updates
+                    .id("next-event-\(viewRefreshTrigger)")
             } else if isPastDate(date) {
                 // For past dates, show a message
                 PastDateView(date: date)
             } else if Calendar.current.isDateInToday(date) && isAfterBedtime() {
                 DayCompletionView()
+                    // CRITICAL FIX: Add ID using the viewRefreshTrigger to ensure view updates
+                    .id("day-completion-\(viewRefreshTrigger)")
             } else {
                 // Show daily summary for future dates only
                 FutureDateSummaryView(date: date)
@@ -129,6 +152,43 @@ struct NowFocusView: View {
                 
                 // Force view refresh when active event changes
                 timerID = UUID()
+                
+                // CRITICAL FIX: Force complete view refresh
+                viewRefreshTrigger = UUID()
+            }
+        }
+        // CRITICAL FIX: Add an onAppear handler to refresh the view when it appears
+        .onAppear {
+            // Determine if it's today and update view
+            if Calendar.current.isDateInToday(date) {
+                // Force a refresh
+                viewRefreshTrigger = UUID()
+                
+                // Register for application state notifications
+                NotificationCenter.default.addObserver(
+                    forName: UIApplication.didBecomeActiveNotification,
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    print("NowFocusView detected app became active")
+                    // Force view refresh when app becomes active
+                    self.viewRefreshTrigger = UUID()
+                }
+            }
+        }
+        // CRITICAL FIX: Register for time updates specifically
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            if Calendar.current.isDateInToday(date) {
+                print("NowFocusView detected day change")
+                // Force refresh on day change
+                viewRefreshTrigger = UUID()
+            }
+        }
+        // CRITICAL FIX: Connect to the shared timer to force periodic refreshes
+        .onReceive(timerManager.$timerTick) { _ in
+            // On every 10th tick, force a complete refresh if needed
+            if timerManager.timerTick % 10 == 0 && Calendar.current.isDateInToday(date) {
+                viewRefreshTrigger = UUID()
             }
         }
     }
@@ -310,6 +370,17 @@ struct NowFocusView: View {
         // Convert both to minutes since midnight for comparison
         let nowMinutes = (nowComponents.hour ?? 0) * 60 + (nowComponents.minute ?? 0)
         let bedMinutes = (bedComponents.hour ?? 0) * 60 + (bedComponents.minute ?? 0)
+        
+        // CRITICAL FIX: For bedtimes after midnight, we need special handling
+        if bedMinutes < 360 { // Assuming bedtime won't be before 6am
+            // If now is after midnight but before bedtime, it's not after bedtime
+            if nowMinutes < 360 && nowMinutes < bedMinutes {
+                return false
+            }
+            
+            // If now is after 6pm, it's after bedtime
+            return nowMinutes >= 1080 // 6pm = 18 * 60 = 1080
+        }
         
         return nowMinutes >= bedMinutes
     }
@@ -585,11 +656,13 @@ struct NextEventInfoView: View {
             // Either we had no event before or we have none now
             nextEvent = newNextEvent
             
+            /*
             if let next = nextEvent {
                 //print("Found new next event: \(titleForEvent(next.event)) in \(formatTimeRemaining(next.timeRemaining))")
             } else {
                 //print("No upcoming events found")
             }
+             */
         }
     }
     

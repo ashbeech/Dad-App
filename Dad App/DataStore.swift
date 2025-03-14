@@ -268,7 +268,7 @@ class DataStore: ObservableObject {
     // Method to check if a nap should be automatically stopped due to bedtime
     func checkAndStopNapsAtBedtime() {
         let today = Date()
-        let dateString = formatDate(today)
+        //let dateString = formatDate(today)
         let ongoingNaps = getOngoingSleepEvents(for: today).filter { $0.sleepType == .nap }
         
         if !ongoingNaps.isEmpty {
@@ -371,11 +371,27 @@ class DataStore: ObservableObject {
     }
     
     // Timer to periodically check for naps that should be stopped at bedtime
+    // Update the setupBedtimeNapCheckTimer function to also check for day changes
     func setupBedtimeNapCheckTimer() {
         // Check every minute if it's bedtime and if we need to stop any ongoing naps
-        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            self?.checkAndStopNapsAtBedtime()
+        let timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            
+            // Check and stop naps at bedtime
+            self.checkAndStopNapsAtBedtime()
+            
+            // CRITICAL FIX: Also ensure today's schedule exists at regular intervals
+            if Calendar.current.isDateInToday(Date()) {
+                self.ensureTodayScheduleExists()
+            }
         }
+        
+        // Make sure timer runs even when scrolling
+        RunLoop.main.add(timer, forMode: .common)
+        
+        // CRITICAL FIX: Also run these checks immediately
+        ensureTodayScheduleExists()
+        checkAndStopNapsAtBedtime()
     }
     
     func togglePauseOngoingNap(_ sleepEvent: SleepEvent, for date: Date) {
@@ -618,6 +634,95 @@ class DataStore: ObservableObject {
             lastEventStates.removeLast()
         }
     }
+    
+    // Add a new function to detect day change and ensure today's schedule exists
+    func ensureTodayScheduleExists() {
+        let today = Date()
+        let dateString = formatDate(today)
+        
+        // Check if we have any events for today
+        if events[dateString]?.isEmpty != false {
+            print("DataStore: No events found for today, generating daily schedule")
+            generateDailySchedule(for: today)
+            
+            // Notify observers that event data has changed
+            NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: nil)
+        } else {
+            // Check if we have wake and bedtime events
+            let todaySleepEvents = sleepEvents[dateString] ?? []
+            let hasWakeEvent = todaySleepEvents.contains(where: { $0.sleepType == .waketime })
+            let hasBedtimeEvent = todaySleepEvents.contains(where: { $0.sleepType == .bedtime })
+            
+            if !hasWakeEvent || !hasBedtimeEvent {
+                print("DataStore: Missing wake or bedtime events for today, updating schedule")
+                
+                // Only create missing events
+                if !hasWakeEvent {
+                    createDefaultWakeEvent(for: today)
+                }
+                
+                if !hasBedtimeEvent {
+                    createDefaultBedtimeEvent(for: today)
+                }
+                
+                // Notify observers that event data has changed
+                NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: nil)
+            }
+        }
+    }
+    
+    // Helper methods to create wake and bedtime events for a specific date
+    func createDefaultWakeEvent(for date: Date) {
+        let calendar = Calendar.current
+        var wakeTimeComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        let babyWakeTimeComponents = calendar.dateComponents([.hour, .minute], from: baby.wakeTime)
+        wakeTimeComponents.hour = babyWakeTimeComponents.hour
+        wakeTimeComponents.minute = babyWakeTimeComponents.minute
+        
+        if let wakeDateTime = calendar.date(from: wakeTimeComponents) {
+            let wakeEvent = SleepEvent(
+                date: wakeDateTime,
+                sleepType: .waketime,
+                endTime: wakeDateTime.addingTimeInterval(30 * 60),
+                isTemplate: false
+            )
+            
+            // Add the event to the data store
+            addSleepEvent(wakeEvent, for: date)
+        }
+    }
+
+    func createDefaultBedtimeEvent(for date: Date) {
+        let calendar = Calendar.current
+        var bedTimeComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        let babyBedTimeComponents = calendar.dateComponents([.hour, .minute], from: baby.bedTime)
+        bedTimeComponents.hour = babyBedTimeComponents.hour
+        bedTimeComponents.minute = babyBedTimeComponents.minute
+        
+        if let bedDateTime = calendar.date(from: bedTimeComponents) {
+            // End time is the next morning's wake time
+            var nextDay = calendar.dateComponents([.year, .month, .day], from: date)
+            nextDay.day = (nextDay.day ?? 0) + 1
+            var nextWakeTimeComponents = nextDay
+            
+            let babyWakeTimeComponents = calendar.dateComponents([.hour, .minute], from: baby.wakeTime)
+            nextWakeTimeComponents.hour = babyWakeTimeComponents.hour
+            nextWakeTimeComponents.minute = babyWakeTimeComponents.minute
+            
+            let nextWakeDateTime = calendar.date(from: nextWakeTimeComponents) ?? bedDateTime.addingTimeInterval(10 * 3600)
+            
+            let bedEvent = SleepEvent(
+                date: bedDateTime,
+                sleepType: .bedtime,
+                endTime: nextWakeDateTime,
+                isTemplate: false
+            )
+            
+            // Add the event to the data store
+            addSleepEvent(bedEvent, for: date)
+        }
+    }
+
     
     // Redo functionality
     // Redo functionality
