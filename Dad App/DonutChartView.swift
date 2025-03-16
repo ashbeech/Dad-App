@@ -28,6 +28,7 @@ struct DonutChartView: View {
     @State private var animateCurrentTimeLine: Bool = false
     @State private var timerUpdateCounter: Int = 0
     @State private var forceRedraw: UUID = UUID()
+    @State private var lastActiveNapId: UUID? = nil
     @State private var showLockAnimation: Bool = false
     
     private struct DragState {
@@ -141,6 +142,10 @@ struct DonutChartView: View {
                         .zIndex(renderData.zIndex)
                 }
                 
+                // Draw the current time marker if within waking hours AND it's today
+                currentTimeMarkerView(geometry: geometry)
+                    .zIndex(666)
+                
                 // Time markers for better readability
                 timeMarkersView(geometry: geometry)
                     .zIndex(2) // Just above base arc
@@ -160,37 +165,7 @@ struct DonutChartView: View {
                 confirmationTimeLabelsView(geometry: geometry)
                     .zIndex(333)
                 
-                // Draw the current time marker if within waking hours AND it's today
-                currentTimeMarkerView(geometry: geometry)
-                    .zIndex(666)
-                
-                // Hidden element for refreshing view
-                Color.clear
-                    .frame(width: 0, height: 0)
-                    .onReceive(dataStore.$baby) { newBaby in
-                        // Only trigger refresh if wake or bedtime has changed
-                        if newBaby.wakeTime != lastWakeTime || newBaby.bedTime != lastBedTime {
-                            withAnimation(.easeInOut(duration: 0.5)) {
-                                // Update tracking values
-                                lastWakeTime = newBaby.wakeTime
-                                lastBedTime = newBaby.bedTime
-                                
-                                // Force view to update
-                                refreshTrigger.toggle()
-                            }
-                        }
-                    }
-                    .zIndex(0)
             }.onAppear {
-                // Set initial values for time tracking
-                lastWakeTime = dataStore.baby.wakeTime
-                lastBedTime = dataStore.baby.bedTime
-                
-                // Calculate correct time angle IMMEDIATELY on appear
-                // This is critical to avoid the initial jump
-                if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday() {
-                    currentTimeAngle = angleForTime(currentTime)
-                }
                 
                 // Add notification observer for past date editing state changes
                 NotificationCenter.default.addObserver(
@@ -226,50 +201,9 @@ struct DonutChartView: View {
                     }
                 }
                 
-                // Listen for wake/bedtime changes
-                NotificationCenter.default.addObserver(
-                    forName: NSNotification.Name("BabyTimeChanged"),
-                    object: nil,
-                    queue: .main
-                ) { _ in
-                    // Force complete view refresh with longer delay to ensure dataStore updates are complete
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        //print("BabyTimeChanged notification received: Wake=\(self.dataStore.baby.wakeTime), Bed=\(self.dataStore.baby.bedTime)")
-                        
-                        // Generate new UUID to force complete view redraw
-                        withAnimation(.easeInOut(duration: 0.5)) {
-                            self.forceRedraw = UUID()
-                            self.lastWakeTime = self.dataStore.baby.wakeTime
-                            self.lastBedTime = self.dataStore.baby.bedTime
-                            self.refreshTrigger.toggle()
-                        }
-                    }
-                }
-                
-                // Add observer for when app returns to foreground to reset timer
-                NotificationCenter.default.addObserver(
-                    forName: UIApplication.didBecomeActiveNotification,
-                    object: nil,
-                    queue: .main
-                ) { _ in
-                    // Reset and restart timer when app becomes active
-                    self.enhancedTimerSetup()
-                }
-                
                 // Setup the enhanced timer
                 enhancedTimerSetup()
                 
-                // Start with the correct current time - do this explicitly
-                if Calendar.current.isDateInToday(date) {
-                    if let currentTime = getCurrentTimeForToday() {
-                        currentTimeAngle = angleForTime(currentTime)
-                        // Force refresh to ensure the marker is drawn immediately
-                        refreshTrigger.toggle()
-                    }
-                }
-                
-                // Check for any ongoing naps and set as active event
-                checkForOngoingNaps()
             }
             .onDisappear {
                 // Stop the timer
@@ -460,35 +394,6 @@ struct DonutChartView: View {
         return renderEntry.zIndex
     }
     
-    private func updateRenderOrder() {
-        // Force a refresh of the view to recalculate all z-indices
-        DispatchQueue.main.async {
-            self.refreshTrigger.toggle()
-        }
-    }
-    
-    private func calculateTotalWakingHours() -> Double {
-        let calendar = Calendar.current
-        let wakeComponents = calendar.dateComponents([.hour, .minute], from: dataStore.baby.wakeTime)
-        let bedComponents = calendar.dateComponents([.hour, .minute], from: dataStore.baby.bedTime)
-        
-        guard let wakeHour = wakeComponents.hour, let wakeMinute = wakeComponents.minute,
-              let bedHour = bedComponents.hour, let bedMinute = bedComponents.minute else {
-            return 14.0 // Default to 14 hours if we can't calculate
-        }
-        
-        // Calculate in minutes for better precision
-        let wakeTimeMinutes = Double(wakeHour * 60 + wakeMinute)
-        let bedTimeMinutes = Double(bedHour * 60 + bedMinute)
-        
-        // Handle case where bedtime is after midnight
-        let totalWakingMinutes = bedTimeMinutes > wakeTimeMinutes
-        ? bedTimeMinutes - wakeTimeMinutes
-        : (24 * 60 - wakeTimeMinutes) + bedTimeMinutes
-        
-        return totalWakingMinutes / 60.0 // Convert minutes to hours
-    }
-    
     // MARK: - Component Views
     
     private func taskEventView(event: Event, geometry: GeometryProxy) -> some View {
@@ -647,13 +552,17 @@ struct DonutChartView: View {
                         .shadow(radius: isEventInvolved ? 4 : 0)
                         
                         // Add a status indicator for ongoing naps in the middle of the arc
-                        if isOngoing {
-                            let middleAngle = (angleForTime(displayStartTime) + angleForTime(displayEndTime)) / 2
-                            Image(systemName: isPaused ? "pause.fill" : "lock.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white)
-                                .position(pointOnDonutCenter(angle: middleAngle, geometry: geometry))
-                        }
+                        /*
+                         if isOngoing {
+                         let middleAngle = (angleForTime(displayStartTime) + angleForTime(displayEndTime)) / 2
+                         
+                         Image(systemName: isPaused ? "pause.fill" : "lock.fill")
+                         .font(.system(size: 12))
+                         .foregroundColor(.white)
+                         .position(pointOnDonutCenter(angle: middleAngle, geometry: geometry))
+                         
+                         }
+                         */
                     }
                     
                     // Start circle
@@ -750,8 +659,6 @@ struct DonutChartView: View {
         timer = nil
         
         // Reset the current time angle immediately for today's date
-        // Calculate the current time angle ONCE before setting up the timer
-        // This ensures we have the correct angle before the first render
         if Calendar.current.isDateInToday(date) {
             if let currentTime = getCurrentTimeForToday() {
                 // Use transaction to avoid animation on initial setup
@@ -763,19 +670,19 @@ struct DonutChartView: View {
                     refreshTrigger.toggle()
                 }
             }
+            
+            // Check for ongoing naps only once at startup
+            checkForOngoingNaps()
         }
         
-        // Create a new timer with more reliable timing - every 15 seconds is enough for smooth updates
-        // Create a new timer with more reliable timing - every 30 seconds is enough
-        // Using 30 instead of 15 reduces unnecessary updates
-        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in            
+        // Create a timer with more reasonable timing - every 60 seconds instead of 15
+        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             if Calendar.current.isDateInToday(self.date) {
                 if let currentTime = self.getCurrentTimeForToday() {
                     // Calculate new angle
                     let newAngle = self.angleForTime(currentTime)
                     
                     // Only update if the angle has changed significantly (> 0.5 degrees)
-                    // This prevents unnecessary UI updates
                     if abs(newAngle - self.currentTimeAngle) > 0.5 {
                         // Allow animation for smooth transitions
                         self.currentTimeAngle = newAngle
@@ -786,10 +693,14 @@ struct DonutChartView: View {
             }
             
             self.timerUpdateCounter += 1
-            self.checkForOngoingNaps()
+            
+            // Only check for ongoing naps every 5 timer ticks (2.5 minutes) instead of every tick
+            if self.timerUpdateCounter % 5 == 0 {
+                self.checkForOngoingNaps()
+            }
         }
         
-        // Ensure timer runs even when scrolling (important for reliable updates)
+        // Ensure timer runs even when scrolling
         if let timer = timer {
             RunLoop.main.add(timer, forMode: .common)
         }
@@ -826,11 +737,6 @@ struct DonutChartView: View {
         
         // Check if bedtime is after midnight
         let isBedtimeAfterMidnight = bedMinutes < wakeMinutes
-        
-        // Calculate total waking minutes
-        /*let totalWakingMinutes = isBedtimeAfterMidnight
-        ? (24 * 60 - wakeMinutes) + bedMinutes
-        : bedMinutes - wakeMinutes*/
         
         //print("Total waking minutes: \(totalWakingMinutes), isBedtimeAfterMidnight: \(isBedtimeAfterMidnight)")
         
@@ -972,8 +878,6 @@ struct DonutChartView: View {
         let validStartTime = calendar.date(from: finalStartComponents) ?? startTime
         let validEndTime = calendar.date(from: finalEndComponents) ?? endTime
         
-        /*print("Validated: Start: \(calendar.dateComponents([.hour, .minute], from: validStartTime).hour ?? 0):\(calendar.dateComponents([.hour, .minute], from: validStartTime).minute ?? 0), End: \(calendar.dateComponents([.hour, .minute], from: validEndTime).hour ?? 0):\(calendar.dateComponents([.hour, .minute], from: validEndTime).minute ?? 0)")
-         */
         return (validStartTime, validEndTime)
     }
     
@@ -1097,6 +1001,7 @@ struct DonutChartView: View {
     func currentTimeMarkerView(geometry: GeometryProxy) -> some View {
         Group {
             if Calendar.current.isDateInToday(date) && !isAfterBedtime() {
+                
                 let angleRadians = currentTimeAngle * .pi / 180
                 let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
                 let radius = min(geometry.size.width, geometry.size.height) / 2
@@ -1121,7 +1026,30 @@ struct DonutChartView: View {
                 .shadow(color: Color.red.opacity(0.4), radius: 2, x: 0, y: 0)
             }
         }
-        .id("timeMarker-\(refreshTrigger)")
+        .onAppear {
+            
+            print("CURRENT TIME MARKER")
+            if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday()  {
+                currentTimeAngle = angleForTime(currentTime)
+            }
+            
+            // Listen for direct notifications about event changes
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("EventDataChanged"),
+                object: nil,
+                queue: .main
+            ) { _ in
+                if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday()  {
+                    currentTimeAngle = angleForTime(currentTime)
+                }
+                refreshTrigger.toggle()
+                //self.forceRedraw = UUID()
+            }
+            
+        }.onDisappear() {
+            NotificationCenter.default.removeObserver(self)
+        }
+        .id("timeMarker-\(forceRedraw)")
     }
     
     private func isAfterBedtime() -> Bool {
@@ -1156,38 +1084,6 @@ struct DonutChartView: View {
         return nowMinutes >= bedMinutes
     }
     
-    private func sleepEventsView(geometry: GeometryProxy) -> some View {
-        Group {
-            // This invisible view ensures updates happen based on the timer
-            Color.clear
-                .frame(width: 0, height: 0)
-                .onChange(of: timerUpdateCounter) { _, _ in }
-            
-            // Show the NowFocusView for any active events without background
-            if let activeEvent = currentActiveEvent, activeEvent.type == .sleep {
-                NowFocusView(currentActiveEvent: $currentActiveEvent, date: date)
-                    .frame(width: geometry.size.width * 0.5, height: geometry.size.height * 0.5)
-                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                    .zIndex(100) // Ensure it's on top of everything
-                    .background(Color.clear) // Ensure no background
-            }
-            
-            ForEach(events.filter { event in
-                // Only include sleep events that aren't wake/bedtime AND match the filter if active
-                if event.type == .sleep,
-                   let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
-                   let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date),
-                   sleepEvent.sleepType == .nap {
-                    return filteredEventTypes?.contains(.sleep) ?? true || filteredEventTypes == nil
-                }
-                return false
-            }) { event in
-                sleepEventView(event: event, geometry: geometry)
-            }
-        }
-        .id("sleepEvents-\(refreshTrigger)")
-    }
-    
     private func timeMarkersView(geometry: GeometryProxy) -> some View {
         // Get fresh values directly from dataStore each time this is called
         // DO NOT use cached values like lastWakeTime/lastBedTime
@@ -1197,7 +1093,7 @@ struct DonutChartView: View {
         let bedTime = bedtimeEvent?.date ?? dataStore.baby.bedTime
         
         // Print for debugging
-        //print("Generating time markers: Wake=\(wakeTime), Bed=\(bedTime)")
+        print("Generating time markers: Wake=\(wakeTime), Bed=\(bedTime)")
         
         let calendar = Calendar.current
         let wakeComponents = calendar.dateComponents([.hour, .minute], from: wakeTime)
@@ -1218,7 +1114,7 @@ struct DonutChartView: View {
         }
         
         let totalWakingHours = bedTimeHour - wakeTimeHour
-        //print("Total waking hours: \(totalWakingHours)")
+        print("Total waking hours: \(totalWakingHours)")
         
         // Generate appropriate time markers based on waking hours
         let markers = generateTimeMarkers(wakeHour: wakeTimeHour, totalWakingHours: totalWakingHours)
@@ -1238,7 +1134,7 @@ struct DonutChartView: View {
                     }
                 }
             }
-                .id(UUID()) // Force markers to rebuild each time
+                .id("timeMarkers-\(refreshTrigger)")
         )
     }
     
@@ -1648,12 +1544,6 @@ struct DonutChartView: View {
     private func handleSleepEventDragEnd(value: DragGesture.Value, event: Event) {
         
         guard dataStore.isEditingAllowed(for: date) else { return }
-        
-        // Get fresh wake and bedtime constraints before updating
-        //let wakeEvent = findWakeEvent()
-        //let bedtimeEvent = findBedtimeEvent()
-        //let wakeTime = wakeEvent?.date ?? dataStore.baby.wakeTime
-        //let bedTime = bedtimeEvent?.date ?? dataStore.baby.bedTime
         
         // Recalculate angles based on current constraints
         dragState.dragAngle = angleForTime(dragState.dragTime)
@@ -2224,37 +2114,6 @@ struct DonutChartView: View {
         }
         
         return calendar.date(from: dateComponents) ?? Date()
-    }
-    
-    private func setupObserversForWakeTimeBedTimeChanges() {
-        // This would typically be placed in onAppear
-        lastWakeTime = dataStore.baby.wakeTime
-        lastBedTime = dataStore.baby.bedTime
-        
-        // Remove any existing observer
-        NotificationCenter.default.removeObserver(self,
-                                                  name: NSNotification.Name("BabyTimeChanged"),
-                                                  object: nil)
-        
-        // Add observer for baby time changes
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("BabyTimeChanged"),
-            object: nil,
-            queue: .main
-        ) { _ in
-            if self.dataStore.baby.wakeTime != self.lastWakeTime ||
-                self.dataStore.baby.bedTime != self.lastBedTime {
-                
-                withAnimation(.easeInOut(duration: 0.5)) {
-                    // Update tracking values
-                    self.lastWakeTime = self.dataStore.baby.wakeTime
-                    self.lastBedTime = self.dataStore.baby.bedTime
-                    
-                    // Force view to update
-                    self.refreshTrigger.toggle()
-                }
-            }
-        }
     }
     
     // Helper method to get current time mapped to today's date
@@ -2938,26 +2797,27 @@ struct DonutChartView: View {
         }
     }
     
-    // Add this new method to check for ongoing naps
+    // Method to check for ongoing naps
     private func checkForOngoingNaps() {
         // Only check for today
         if Calendar.current.isDateInToday(date) {
             // Get all ongoing sleep events for today
             let ongoingNaps = dataStore.getOngoingSleepEvents(for: date).filter { $0.sleepType == .nap }
             
-            // Add debug output
-            print("Found \(ongoingNaps.count) ongoing naps")
-            
             // If there's an ongoing nap, set it as the active event
             if let ongoingNap = ongoingNaps.first {
-                print("Setting currentActiveEvent to nap: \(ongoingNap.id)")
-                currentActiveEvent = ActiveEvent.from(sleepEvent: ongoingNap)
-            } else {
-                // Clear any existing active event if there are no ongoing naps
-                if currentActiveEvent != nil {
-                    print("Clearing currentActiveEvent")
-                    currentActiveEvent = nil
+                // Only update if this is a different nap than what we're already tracking
+                // or if we don't have an active event yet
+                if lastActiveNapId != ongoingNap.id || currentActiveEvent == nil {
+                    print("Setting currentActiveEvent to nap: \(ongoingNap.id)")
+                    currentActiveEvent = ActiveEvent.from(sleepEvent: ongoingNap)
+                    lastActiveNapId = ongoingNap.id
                 }
+            } else if currentActiveEvent != nil {
+                // Clear any existing active event if there are no ongoing naps
+                print("Clearing currentActiveEvent")
+                currentActiveEvent = nil
+                lastActiveNapId = nil
             }
         }
     }
@@ -3056,7 +2916,7 @@ struct SleepArcCapsule: View {
                     endAngle: endAngle,
                     donutWidth: donutWidth
                 )
-                .fill(isPaused ? color.opacity(0.5) : color)
+                .fill(color)
                 
                 // Overlay for ongoing events
                 /*
@@ -3067,15 +2927,17 @@ struct SleepArcCapsule: View {
                  */
                 
                 // Overlay for paused events
-                if isPaused {
-                    PausedEventOverlay(
-                        startAngle: startAngle,
-                        endAngle: endAngle,
-                        donutWidth: donutWidth
-                    )
-                    .zIndex(2)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                }
+                /*
+                 if isPaused {
+                 PausedEventOverlay(
+                 startAngle: startAngle,
+                 endAngle: endAngle,
+                 donutWidth: donutWidth
+                 )
+                 .zIndex(2)
+                 .frame(width: geometry.size.width, height: geometry.size.height)
+                 }
+                 */
             }
         }
     }

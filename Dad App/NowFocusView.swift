@@ -76,6 +76,7 @@ struct NowFocusView: View {
                     localIsPaused = sleepEvent.isPaused
                     updateDisplayTime(sleepEvent: sleepEvent)
                     
+                    /*
                     // Listen for pause state changes
                     NotificationCenter.default.addObserver(
                         forName: NSNotification.Name("NapPauseStateChanged"),
@@ -94,6 +95,7 @@ struct NowFocusView: View {
                             timerID = UUID()
                         }
                     }
+                     */
                     
                     // Listen for new active nap notifications
                     NotificationCenter.default.addObserver(
@@ -106,10 +108,22 @@ struct NowFocusView: View {
                             currentActiveEvent = newActiveEvent
                             
                             // Force immediate refresh
-                            viewRefreshTrigger = UUID()
+                            //viewRefreshTrigger = UUID()
                             timerID = UUID()
                         }
                     }
+                    
+                    NotificationCenter.default.addObserver(
+                        forName: NSNotification.Name("ClearActiveNap"),
+                        object: nil,
+                        queue: .main
+                    ) { _ in
+                        // Force reset the currentActiveEvent state
+                        DispatchQueue.main.async {
+                            self.currentActiveEvent = nil
+                        }
+                    }
+                    
                 }
                 .onDisappear {
                     NotificationCenter.default.removeObserver(self)
@@ -188,7 +202,7 @@ struct NowFocusView: View {
         .onReceive(timerManager.$timerTick) { _ in
             // On every 10th tick, force a complete refresh if needed
             if timerManager.timerTick % 10 == 0 && Calendar.current.isDateInToday(date) {
-                viewRefreshTrigger = UUID()
+                //viewRefreshTrigger = UUID()
             }
         }
     }

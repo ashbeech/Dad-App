@@ -95,8 +95,11 @@ struct ContentView: View {
             .padding(.bottom, 8)
         }
         .sheet(isPresented: $showingAddSheet) {
-            AddEventView(date: currentDate, initialTime: initialEventTime)
-                .environmentObject(dataStore)
+            if dataStore.isEditingAllowed(for: currentDate) {
+                AddEventView(date: currentDate, initialTime: initialEventTime)
+                    .environmentObject(dataStore)
+            }
+
         }
         .sheet(item: $selectedEvent) { event in
             // Check if editing is allowed before presenting edit sheet
@@ -111,19 +114,6 @@ struct ContentView: View {
                 message: Text("This date is in the past. Tap the padlock icon in the center to enable editing."),
                 dismissButton: .default(Text("OK"))
             )
-        }
-        .sheet(isPresented: $showingAddSheet) {
-            AddEventView(date: currentDate, initialTime: initialEventTime)
-                .environmentObject(dataStore)
-            //.slideAnimation(isPresented: $showingAddSheet)
-            //.onAppear {
-            // Force log to verify the initialTime value
-            //print("ADD EVENT VIEW APPEARED with initialTime: \(formatTime(initialEventTime))")
-            //}
-        }
-        .sheet(item: $selectedEvent) { event in
-            EditEventView(event: event, date: currentDate)
-                .environmentObject(dataStore)
         }
         .sheet(isPresented: $showingSettingsSheet) {
             BabySettingsView()
@@ -172,9 +162,11 @@ struct ContentView: View {
                 dataStore.ensureTodayScheduleExists()
                 
                 // Force a complete UI refresh
+                /*
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     self.forceRefreshID = UUID()
                 }
+                 */
             }
             
             // CRITICAL FIX: Also observe for applicationDidBecomeActive
@@ -207,10 +199,13 @@ struct ContentView: View {
                 // Ensure today has events
                 dataStore.ensureTodayScheduleExists()
                 
+                /*
                 // Force UI refresh
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     self.forceRefreshID = UUID()
+                    
                 }
+                 */
             }
         }
         .onChange(of: currentDate) { _, newDate in

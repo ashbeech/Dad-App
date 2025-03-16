@@ -178,6 +178,7 @@ struct EditSleepView: View {
     }
     
     private func saveEvent() {
+                
         // For wake time, end time is not really relevant
         let finalEndTime: Date
         
@@ -252,6 +253,7 @@ struct EditSleepView: View {
     }
     
     private func savePermanentDefaultTime() {
+                
         var updatedBaby = dataStore.baby
         
         if sleepEvent.sleepType == .waketime {
@@ -264,12 +266,14 @@ struct EditSleepView: View {
         
         dataStore.baby = updatedBaby
         
-        // Post notification with async delay to ensure UI updates AFTER dataStore changes propagate
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NotificationCenter.default.post(name: NSNotification.Name("BabyTimeChanged"), object: nil)
-        }
+        // Save the event first
+        saveEvent()
         
-        saveEvent() // Also save the current instance
+        // THEN post notification with a longer delay
+        //DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            //NotificationCenter.default.post(name: NSNotification.Name("BabyTimeChanged"), object: nil)
+            //print("Posted BabyTimeChanged notification")
+        //}
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {

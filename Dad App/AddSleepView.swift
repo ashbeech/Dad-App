@@ -198,6 +198,16 @@ struct AddSleepView: View {
         .onAppear {
             checkForOverlappingNaps()
         }
+        .onDisappear {
+            // CRITICAL FIX: Make sure we don't accidentally set an active nap on dismiss
+            if !startImmediately {
+                // If we weren't starting a nap immediately, ensure no nap controls show
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("ClearActiveNap"),
+                    object: nil
+                )
+            }
+        }
     }
     
     private func checkForOverlappingNaps() {
@@ -293,16 +303,19 @@ struct AddSleepView: View {
         
         // Post notification to immediately set this as active event
         if !showEndTime && startImmediately {
-            // Create active event from this sleep event
-            let activeEvent = ActiveEvent.from(sleepEvent: sleepEvent)
-            
-            // Post notification with the active event
-            NotificationCenter.default.post(
-                name: NSNotification.Name("SetActiveNap"),
-                object: activeEvent
-            )
+            // ONLY post notification after we're sure everything is saved properly
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                // Create active event from this sleep event
+                let activeEvent = ActiveEvent.from(sleepEvent: sleepEvent)
+                
+                // Post notification with the active event
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("SetActiveNap"),
+                    object: activeEvent
+                )
+            }
         }
-        
+                
         presentationMode.wrappedValue.dismiss()
     }
 }

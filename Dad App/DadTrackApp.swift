@@ -1,15 +1,11 @@
-//
-//  DadTrackApp.swift
-//  Dad App
-//
-//  Created by Ashley Davison on 06/03/2025.
-//
-
 import SwiftUI
 
 @main
 struct DadTrackApp: App {
     @StateObject private var dataStore = DataStore()
+    
+    // Change this to a mutable property wrapper
+    @State private var observers: [NSObjectProtocol] = []
     
     var body: some Scene {
         WindowGroup {
@@ -33,6 +29,19 @@ struct DadTrackApp: App {
                             object: nil
                         )
                     }
+                    
+                    // Add persistent observer for BabyTimeChanged
+                    let observer = NotificationCenter.default.addObserver(
+                        forName: NSNotification.Name("BabyTimeChanged"),
+                        object: nil,
+                        queue: .main
+                    ) { _ in
+                        print("APP LEVEL: Received BabyTimeChanged notification")
+                        // Post a notification that will be guaranteed to reach all components
+                    }
+                    
+                    // Store the observer using @State property wrapper
+                    observers.append(observer)
                 }
                 .onChange(of: UIApplication.shared.applicationState) { _, newState in
                     // When app comes to foreground, check for naps at bedtime
@@ -50,12 +59,6 @@ struct DadTrackApp: App {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                             NotificationCenter.default.post(
                                 name: UIApplication.didBecomeActiveNotification,
-                                object: nil
-                            )
-                            
-                            // Also post our custom notification
-                            NotificationCenter.default.post(
-                                name: NSNotification.Name("EventDataChanged"),
                                 object: nil
                             )
                         }
