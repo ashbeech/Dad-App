@@ -50,32 +50,6 @@ struct EventListView: View {
             .id(listRefreshID)
             .onAppear {
                 setupRefreshTimer()
-                
-                /*
-                // Listen for pause state changes that might need to refresh the entire list
-                NotificationCenter.default.addObserver(
-                    forName: NSNotification.Name("NapPauseStateChanged"),
-                    object: nil,
-                    queue: .main
-                ) { _ in
-                    // Avoid immediate refresh which can cause flickering
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        refreshList()
-                    }
-                }*/
-                
-                /*
-                // Listen for nap stopped events
-                NotificationCenter.default.addObserver(
-                    forName: NSNotification.Name("NapStopped"),
-                    object: nil,
-                    queue: .main
-                ) { _ in
-                    // Refresh after a slight delay
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        refreshList()
-                    }
-                }*/
             }
             .onDisappear {
                 refreshTimer?.invalidate()

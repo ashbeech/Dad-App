@@ -268,12 +268,7 @@ struct EditSleepView: View {
         
         // Save the event first
         saveEvent()
-        
-        // THEN post notification with a longer delay
-        //DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            //NotificationCenter.default.post(name: NSNotification.Name("BabyTimeChanged"), object: nil)
-            //print("Posted BabyTimeChanged notification")
-        //}
+
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {

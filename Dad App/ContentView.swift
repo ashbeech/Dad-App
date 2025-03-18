@@ -99,7 +99,7 @@ struct ContentView: View {
                 AddEventView(date: currentDate, initialTime: initialEventTime)
                     .environmentObject(dataStore)
             }
-
+            
         }
         .sheet(item: $selectedEvent) { event in
             // Check if editing is allowed before presenting edit sheet
@@ -161,12 +161,6 @@ struct ContentView: View {
                 // CRITICAL FIX: Ensure today has events generated
                 dataStore.ensureTodayScheduleExists()
                 
-                // Force a complete UI refresh
-                /*
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    self.forceRefreshID = UUID()
-                }
-                 */
             }
             
             // CRITICAL FIX: Also observe for applicationDidBecomeActive
@@ -200,11 +194,11 @@ struct ContentView: View {
                 dataStore.ensureTodayScheduleExists()
                 
                 /*
-                // Force UI refresh
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    self.forceRefreshID = UUID()
-                    
-                }
+                 // Force UI refresh
+                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                 self.forceRefreshID = UUID()
+                 
+                 }
                  */
             }
         }

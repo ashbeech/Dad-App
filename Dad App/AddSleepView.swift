@@ -230,8 +230,8 @@ struct AddSleepView: View {
         for napEvent in sleepEvents.filter({ $0.sleepType == .nap }) {
             // For ongoing naps, use current time as the effective end time
             let napEndTime = napEvent.isOngoing ?
-                (napEvent.isPaused ? (napEvent.lastPauseTime ?? Date()) : Date()) :
-                napEvent.endTime
+            (napEvent.isPaused ? (napEvent.lastPauseTime ?? Date()) : Date()) :
+            napEvent.endTime
             
             if timeRangesOverlap(
                 start1: effectiveStartTime,
@@ -315,7 +315,7 @@ struct AddSleepView: View {
                 )
             }
         }
-                
+        
         presentationMode.wrappedValue.dismiss()
     }
 }

@@ -72,9 +72,9 @@ struct BabySettingsView: View {
         dataStore.baby = updatedBaby
         
         // Post notification with async delay to ensure UI updates AFTER dataStore changes propagate
-        //DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NotificationCenter.default.post(name: NSNotification.Name("BabyTimeChanged"), object: nil)
-        //}
+        }
         
         presentationMode.wrappedValue.dismiss()
     }

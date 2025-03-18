@@ -56,7 +56,7 @@ struct DadTrackApp: App {
                         
                         // CRITICAL FIX: Post a notification that the app became active
                         // This will trigger UI components to refresh
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             NotificationCenter.default.post(
                                 name: UIApplication.didBecomeActiveNotification,
                                 object: nil

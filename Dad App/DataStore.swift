@@ -691,7 +691,7 @@ class DataStore: ObservableObject {
             addSleepEvent(wakeEvent, for: date)
         }
     }
-
+    
     func createDefaultBedtimeEvent(for date: Date) {
         let calendar = Calendar.current
         var bedTimeComponents = calendar.dateComponents([.year, .month, .day], from: date)
@@ -722,7 +722,7 @@ class DataStore: ObservableObject {
             addSleepEvent(bedEvent, for: date)
         }
     }
-
+    
     
     // Redo functionality
     // Redo functionality

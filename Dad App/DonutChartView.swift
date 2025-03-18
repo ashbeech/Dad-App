@@ -998,7 +998,14 @@ struct DonutChartView: View {
         .id("specialEvents-\(refreshTrigger)")
     }
     
-    func currentTimeMarkerView(geometry: GeometryProxy) -> some View {
+    private func refreshCurrentTimeMarkerView() {
+        if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday()  {
+            currentTimeAngle = angleForTime(currentTime)
+        }
+        refreshTrigger.toggle()
+    }
+    
+    internal func currentTimeMarkerView(geometry: GeometryProxy) -> some View {
         Group {
             if Calendar.current.isDateInToday(date) && !isAfterBedtime() {
                 
@@ -1028,10 +1035,6 @@ struct DonutChartView: View {
         }
         .onAppear {
             
-            print("CURRENT TIME MARKER")
-            if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday()  {
-                currentTimeAngle = angleForTime(currentTime)
-            }
             
             // Listen for direct notifications about event changes
             NotificationCenter.default.addObserver(
@@ -1039,11 +1042,15 @@ struct DonutChartView: View {
                 object: nil,
                 queue: .main
             ) { _ in
-                if Calendar.current.isDateInToday(date), let currentTime = getCurrentTimeForToday()  {
-                    currentTimeAngle = angleForTime(currentTime)
-                }
-                refreshTrigger.toggle()
-                //self.forceRedraw = UUID()
+                refreshCurrentTimeMarkerView()
+            }
+            
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                refreshCurrentTimeMarkerView()
             }
             
         }.onDisappear() {
@@ -1113,7 +1120,7 @@ struct DonutChartView: View {
             bedTimeHour += 24.0
         }
         
-        let totalWakingHours = bedTimeHour - wakeTimeHour
+        let totalWakingHours = round(100 * (bedTimeHour - wakeTimeHour)) / 100
         print("Total waking hours: \(totalWakingHours)")
         
         // Generate appropriate time markers based on waking hours
@@ -1615,10 +1622,6 @@ struct DonutChartView: View {
             generator.impactOccurred()
         }
         
-        // Calculate movement delta from initial position
-        let deltaX = value.location.x - dragState.dragStartLocation.x
-        let deltaY = value.location.y - dragState.dragStartLocation.y
-        
         // Convert delta to angle change (based on circle geometry)
         let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
         let startVector = CGPoint(x: dragState.dragStartLocation.x - center.x,
@@ -1629,7 +1632,6 @@ struct DonutChartView: View {
         // Calculate angle between vectors
         let startAngle = atan2(startVector.y, startVector.x)
         let currentAngle = atan2(currentVector.y, currentVector.x)
-        let angleDelta = (currentAngle - startAngle) * 180 / .pi
         
         // Apply angle change to starting angle
         let newAngle = angleFromPoint(value.location, geometry: geometry)
