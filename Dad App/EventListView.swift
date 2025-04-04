@@ -29,10 +29,29 @@ struct EventListView: View {
         } else {
             List {
                 ForEach(events.sorted(by: { $0.date < $1.date }), id: \.id) { event in
-                    EventRow(event: event, date: date) // Pass date to EventRow
+                    EventRow(event: event, date: date)
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            // Check if editing is allowed before selecting
+                            // Check if it's an ongoing nap first
+                            if event.type == .sleep,
+                               let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date),
+                               sleepEvent.isOngoing && sleepEvent.sleepType == .nap && Calendar.current.isDateInToday(date) {
+                                // For ongoing naps, don't allow editing
+                                // Instead, ensure it's the active nap in NowFocusView
+                                let activeEvent = ActiveEvent.from(sleepEvent: sleepEvent)
+                                NotificationCenter.default.post(
+                                    name: NSNotification.Name("SetActiveNap"),
+                                    object: activeEvent
+                                )
+                                
+                                // Provide haptic feedback to indicate action was taken
+                                let generator = UIImpactFeedbackGenerator(style: .light)
+                                generator.impactOccurred()
+                                
+                                return
+                            }
+                            
+                            // For other events, continue with normal editing logic
                             if dataStore.isEditingAllowed(for: date) {
                                 selectedEvent = event
                             } else {
@@ -41,9 +60,8 @@ struct EventListView: View {
                                 generator.notificationOccurred(.warning)
                             }
                         }
-                    // Add a slightly different styling for past dates that are locked
+                        // Add a slightly different styling for past dates that are locked
                         .opacity(isPastDateLocked() ? 0.8 : 1.0)
-                        .id("event-row-\(event.id)")
                 }
             }
             .listStyle(PlainListStyle())
@@ -255,34 +273,81 @@ struct EventRow: View {
     }
     
     private func eventTitle() -> String {
-        switch event.type {
-        case .feed:
-            if let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
-               let feedEvent = dataStore.getFeedEvent(id: event.id, for: date) {
-                return "Feed: \(Int(feedEvent.amount))ml"
-            }
-            return "Feed"
-        case .sleep:
-            if let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
-               let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date) {
-                switch sleepEvent.sleepType {
-                case .nap:
-                    return "Nap"
-                case .bedtime:
-                    return "Bedtime"
-                case .waketime:
-                    return "Wake Up"
+            switch event.type {
+            case .goal:
+                if let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
+                   let goalEvent = dataStore.getGoalEvent(id: event.id, for: date) {
+                    // Calculate days remaining until deadline
+                    let calendar = Calendar.current
+                    let now = Date()
+                    let components = calendar.dateComponents([.day], from: now, to: goalEvent.date)
+                    
+                    if let daysRemaining = components.day {
+                        if daysRemaining < 0 {
+                            return "Goal: \(goalEvent.title) (Overdue)"
+                        } else if daysRemaining == 0 {
+                            return "Goal: \(goalEvent.title) (Due today)"
+                        } else {
+                            return "Goal: \(goalEvent.title) (\(daysRemaining) days)"
+                        }
+                    }
+                    return "Goal: \(goalEvent.title)"
                 }
+                return "Goal"
+            case .feed:
+                if let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
+                   let feedEvent = dataStore.getFeedEvent(id: event.id, for: date) {
+                    return "Feed: \(Int(feedEvent.amount))ml"
+                }
+                return "Feed"
+            case .sleep:
+                if let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
+                   let sleepEvent = dataStore.getSleepEvent(id: event.id, for: date) {
+                    switch sleepEvent.sleepType {
+                    case .nap:
+                        // CRITICAL FIX: Add duration for completed naps
+                        if !sleepEvent.isOngoing {
+                            // Calculate duration for display
+                            let duration: TimeInterval
+                            if let actualDuration = sleepEvent.actualSleepDuration {
+                                // Use actual recorded duration if available
+                                duration = actualDuration
+                            } else {
+                                // Otherwise calculate from end time
+                                duration = sleepEvent.endTime.timeIntervalSince(sleepEvent.date)
+                            }
+                            
+                            // Format duration nicely with seconds for very short durations
+                            let hours = Int(duration) / 3600
+                            let minutes = (Int(duration) % 3600) / 60
+                            let seconds = Int(duration) % 60
+                            
+                            if hours > 0 {
+                                return "Nap: \(hours)h \(minutes)m"
+                            } else if minutes > 0 {
+                                return "Nap: \(minutes)m"
+                            } else {
+                                // CRITICAL FIX: Show seconds when duration is less than a minute
+                                return "Nap: \(seconds)s"
+                            }
+                        }
+                        return "Nap"
+                    case .bedtime:
+                        return "Bedtime"
+                    case .waketime:
+                        return "Wake Up"
+                    }
+                }
+                return "Sleep"
+            case .task:
+                if let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
+                   let taskEvent = dataStore.getTaskEvent(id: event.id, for: date) {
+                    
+                    // Always use the past tense title for display, regardless of completion status
+                    return taskEvent.pastTenseTitle
+                }
+                return "Task"
             }
-            return "Sleep"
-        case .task: return "Task"
-        }
-    }
-    
-    private func formattedTime() -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: event.date)
     }
     
     private func eventIcon() -> some View {
@@ -313,8 +378,30 @@ struct EventRow: View {
             return Image(systemName: "moon.zzz.fill")
                 .foregroundColor(.green)
         case .task:
+            if let date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month, .day], from: event.date)),
+               let taskEvent = dataStore.getTaskEvent(id: event.id, for: date) {
+                
+                // Different icons based on task style (reminder vs. duration) and completion status
+                if taskEvent.hasEndTime {
+                    return Image(systemName: taskEvent.completed ? "checkmark.circle.fill" : "circle.dashed")
+                        .foregroundColor(.green)
+                } else {
+                    return Image(systemName: taskEvent.completed ? "bell.badge.fill" : "bell.fill")
+                        .foregroundColor(.green)
+                }
+            }
             return Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+        case .goal:
+            return Image(systemName: "checkmark.circle.fill") // TODO: placeholder currently
                 .foregroundColor(.green)
         }
     }
+    
+    private func formattedTime() -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: event.date)
+    }
+    
 }

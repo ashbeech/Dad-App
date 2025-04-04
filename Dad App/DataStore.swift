@@ -12,6 +12,7 @@ import UIKit // Added to access UIImpactFeedbackGenerator
 class DataStore: ObservableObject {
     private let babyKey = "baby"
     private let eventsKey = "events"
+    private let goalEventsKey = "goalEvents"
     private let feedEventsKey = "feedEvents"
     private let sleepEventsKey = "sleepEvents"
     private let taskEventsKey = "taskEvents"
@@ -20,10 +21,11 @@ class DataStore: ObservableObject {
     private var deletionTimers: [UUID: Timer] = [:]
     
     @Published var baby: Baby
-    @Published var events: [String: [Event]] = [:] // [DateString: [Event]]
-    @Published var feedEvents: [String: [FeedEvent]] = [:] // [DateString: [FeedEvent]]
-    @Published var sleepEvents: [String: [SleepEvent]] = [:] // [DateString: [SleepEvent]]
+    @Published var events: [String: [Event]] = [:]
+    @Published var feedEvents: [String: [FeedEvent]] = [:]
+    @Published var sleepEvents: [String: [SleepEvent]] = [:]
     @Published var taskEvents: [String: [TaskEvent]] = [:]
+    @Published var goalEvents: [String: [GoalEvent]] = [:]
     @Published var isPastDateEditingEnabled: Bool = false
     
     // For undo/redo functionality
@@ -46,6 +48,11 @@ class DataStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: eventsKey),
            let events = try? JSONDecoder().decode([String: [Event]].self, from: data) {
             self.events = events
+        }
+        
+        if let data = UserDefaults.standard.data(forKey: goalEventsKey),
+           let goalEvents = try? JSONDecoder().decode([String: [GoalEvent]].self, from: data) {
+            self.goalEvents = goalEvents
         }
         
         // Load feed events
@@ -78,6 +85,14 @@ class DataStore: ObservableObject {
             .sink { [weak self] events in
                 if let encoded = try? JSONEncoder().encode(events) {
                     UserDefaults.standard.set(encoded, forKey: self?.eventsKey ?? "")
+                }
+            }
+            .store(in: &cancellables)
+        
+        $goalEvents
+            .sink { [weak self] goalEvents in
+                if let encoded = try? JSONEncoder().encode(goalEvents) {
+                    UserDefaults.standard.set(encoded, forKey: self?.goalEventsKey ?? "")
                 }
             }
             .store(in: &cancellables)
@@ -121,6 +136,23 @@ class DataStore: ObservableObject {
         return isPastDateEditingEnabled
     }
     
+    func addGoalEvent(_ event: GoalEvent, for date: Date) {
+        let dateString = formatDate(date)
+        
+        // Add to general events
+        var currentEvents = events[dateString] ?? []
+        currentEvents.append(event.toEvent())
+        events[dateString] = currentEvents
+        
+        // Add to goal events
+        var currentGoalEvents = goalEvents[dateString] ?? []
+        currentGoalEvents.append(event)
+        goalEvents[dateString] = currentGoalEvents
+        
+        // Post notification about the new event
+        NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
+    }
+    
     func addFeedEvent(_ event: FeedEvent, for date: Date) {
         let dateString = formatDate(date)
         
@@ -158,12 +190,30 @@ class DataStore: ObservableObject {
         // Schedule notification for the event
         NotificationManager.shared.scheduleSleepNotification(for: event)
         
+        // CRITICAL FIX: If this is an ongoing nap, post a special notification
+        if event.isOngoing && event.sleepType == .nap {
+            let activeEvent = ActiveEvent.from(sleepEvent: event)
+            
+            // Post a notification to alert all components of the new active nap
+            NotificationCenter.default.post(
+                name: NSNotification.Name("SetActiveNap"),
+                object: activeEvent
+            )
+            
+            print("DataStore: Posted SetActiveNap notification for new nap \(event.id)")
+        }
+        
         // Add this line to post a notification about the new event
         NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
     }
     
     func addTaskEvent(_ event: TaskEvent, for date: Date) {
         let dateString = formatDate(date)
+        
+        // Always ensure past tense title is generated
+        var updatedEvent = event
+        // Always generate a past tense version regardless of completion status
+        updatedEvent.pastTenseTitle = TaskTitleConverter.shared.convertToPastTense(title: event.title)
         
         // Add to general events
         var currentEvents = events[dateString] ?? []
@@ -172,7 +222,7 @@ class DataStore: ObservableObject {
         
         // Add to task events
         var currentTaskEvents = taskEvents[dateString] ?? []
-        currentTaskEvents.append(event)
+        currentTaskEvents.append(updatedEvent)
         taskEvents[dateString] = currentTaskEvents
         
         // Post notification about the new event
@@ -182,6 +232,12 @@ class DataStore: ObservableObject {
     func getEvents(for date: Date) -> [Event] {
         let dateString = formatDate(date)
         return events[dateString] ?? []
+    }
+    
+    
+    func getGoalEvent(id: UUID, for date: Date) -> GoalEvent? {
+        let dateString = formatDate(date)
+        return goalEvents[dateString]?.first(where: { $0.id == id })
     }
     
     func getFeedEvent(id: UUID, for date: Date) -> FeedEvent? {
@@ -615,7 +671,6 @@ class DataStore: ObservableObject {
                         notes: taskEvent.notes,
                         isTemplate: taskEvent.isTemplate,
                         completed: taskEvent.completed,
-                        priority: taskEvent.priority,
                         isOngoing: taskEvent.isOngoing
                     )
                     
@@ -626,6 +681,7 @@ class DataStore: ObservableObject {
                     let generator = UIImpactFeedbackGenerator(style: .medium)
                     generator.impactOccurred()
                 }
+            case .goal: break
             }
         }
         
@@ -724,7 +780,6 @@ class DataStore: ObservableObject {
     }
     
     
-    // Redo functionality
     // Redo functionality
     func redoLastChange() {
         guard let redoState = redoEventStates.last else { return }
@@ -860,6 +915,7 @@ class DataStore: ObservableObject {
                     let generator = UIImpactFeedbackGenerator(style: .medium)
                     generator.impactOccurred()
                 }
+            case .goal: break
             }
         } else {
             // Handle non-deletion redos as before
@@ -927,7 +983,6 @@ class DataStore: ObservableObject {
                         notes: taskEvent.notes,
                         isTemplate: taskEvent.isTemplate,
                         completed: taskEvent.completed,
-                        priority: taskEvent.priority,
                         isOngoing: taskEvent.isOngoing
                     )
                     
@@ -938,6 +993,7 @@ class DataStore: ObservableObject {
                     let generator = UIImpactFeedbackGenerator(style: .medium)
                     generator.impactOccurred()
                 }
+            case .goal: break
             }
         }
         
@@ -1244,6 +1300,30 @@ class DataStore: ObservableObject {
         }
     }
     
+    
+    func updateGoalEvent(_ event: GoalEvent, for date: Date) {
+        let dateString = formatDate(date)
+        
+        // Update in general events
+        if var currentEvents = events[dateString] {
+            if let index = currentEvents.firstIndex(where: { $0.id == event.id }) {
+                currentEvents[index] = event.toEvent()
+                events[dateString] = currentEvents
+            }
+        }
+        
+        // Update in goal events
+        if var currentGoalEvents = goalEvents[dateString] {
+            if let index = currentGoalEvents.firstIndex(where: { $0.id == event.id }) {
+                currentGoalEvents[index] = event
+                goalEvents[dateString] = currentGoalEvents
+                
+                // Post notification about the event update
+                NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
+            }
+        }
+    }
+
     func updateSleepEvent(_ event: SleepEvent, for date: Date) {
         let dateString = formatDate(date)
         
@@ -1269,13 +1349,6 @@ class DataStore: ObservableObject {
                 currentSleepEvents[index] = eventCopy
                 sleepEvents[dateString] = currentSleepEvents
                 
-                // Add explicit log to track data saving
-                /*
-                 if let duration = actualDuration {
-                 print("DATA STORE: Saved sleep event with actual duration: \(formatDuration(duration))")
-                 }
-                 */
-                
                 // Update notification
                 NotificationManager.shared.cancelNotification(for: event.id)
                 NotificationManager.shared.scheduleSleepNotification(for: event)
@@ -1289,6 +1362,10 @@ class DataStore: ObservableObject {
     func updateTaskEvent(_ event: TaskEvent, for date: Date) {
         let dateString = formatDate(date)
         
+        // Always regenerate past tense title
+        var updatedEvent = event
+        updatedEvent.pastTenseTitle = TaskTitleConverter.shared.convertToPastTense(title: event.title)
+        
         // Update in general events
         if var currentEvents = events[dateString] {
             if let index = currentEvents.firstIndex(where: { $0.id == event.id }) {
@@ -1300,17 +1377,76 @@ class DataStore: ObservableObject {
         // Update in task events
         if var currentTaskEvents = taskEvents[dateString] {
             if let index = currentTaskEvents.firstIndex(where: { $0.id == event.id }) {
-                currentTaskEvents[index] = event
+                currentTaskEvents[index] = updatedEvent
                 taskEvents[dateString] = currentTaskEvents
                 
-                // Cancel any existing notifications for this task
+                // Always cancel existing notifications first
                 NotificationManager.shared.cancelNotification(for: event.id)
+                
+                // Schedule new notification if the task is in the future
+                if event.date > Date() {
+                    // Schedule task notification at the task time
+                    NotificationManager.shared.scheduleTaskNotification(for: updatedEvent, at: updatedEvent.date)
+                }
                 
                 // Post notification about event update
                 NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
             }
         }
     }
+    
+    func deleteGoalEvent(_ event: GoalEvent, for date: Date) {
+        let dateString = formatDate(date)
+        
+        // Cache the event before deletion
+        let deletedState = DeletedEventState(
+            eventId: event.id,
+            eventType: .goal,
+            date: date,
+            dateString: dateString,
+            eventData: event
+        )
+        deletedEventsCache[event.id] = deletedState
+        
+        // Save deletion state for undo
+        lastEventStates.append(EventState(
+            eventId: event.id,
+            eventType: .goal,
+            oldStartTime: event.date,
+            oldEndTime: nil,
+            oldPrepTime: nil,
+            newStartTime: event.date,
+            newEndTime: nil,
+            newPrepTime: nil,
+            isDeletion: true
+        ))
+        
+        // Delete from general events
+        if var currentEvents = events[dateString] {
+            currentEvents.removeAll(where: { $0.id == event.id })
+            events[dateString] = currentEvents
+        }
+        
+        // Delete from goal events
+        if var currentGoalEvents = goalEvents[dateString] {
+            currentGoalEvents.removeAll(where: { $0.id == event.id })
+            goalEvents[dateString] = currentGoalEvents
+            
+            // Post notification about the event deletion
+            NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
+        }
+        
+        // Schedule removal from cache after delay
+        scheduleDeletionCleanup(eventId: event.id)
+        
+        // Clear the position cache for this event
+        NotificationCenter.default.post(name: NSNotification.Name("ClearPositionCache"), object: event.id)
+        
+        // Provide haptic feedback to confirm deletion
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+    }
+    
     
     func deleteFeedEvent(_ event: FeedEvent, for date: Date) {
         let dateString = formatDate(date)
@@ -1470,6 +1606,9 @@ class DataStore: ObservableObject {
         if var currentTaskEvents = taskEvents[dateString] {
             currentTaskEvents.removeAll(where: { $0.id == event.id })
             taskEvents[dateString] = currentTaskEvents
+            
+            // Cancel notification
+            NotificationManager.shared.cancelNotification(for: event.id)
             
             // Trigger UI updates
             NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)

@@ -56,6 +56,12 @@ struct ContentView: View {
                     
                     // Show the add sheet
                     showingAddSheet = true
+                },
+                onDateChanged: { newDate in
+                    // Update the current date from swipe gestures
+                    withAnimation {
+                        currentDate = newDate
+                    }
                 }
             )
             .frame(height: UIScreen.main.bounds.height * 0.38)
@@ -193,13 +199,6 @@ struct ContentView: View {
                 // Ensure today has events
                 dataStore.ensureTodayScheduleExists()
                 
-                /*
-                 // Force UI refresh
-                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                 self.forceRefreshID = UUID()
-                 
-                 }
-                 */
             }
         }
         .onChange(of: currentDate) { _, newDate in
@@ -268,6 +267,10 @@ struct ContentView: View {
                 
                 // Only include wake/bedtime events when "All" or "Sleep" filters are active
                 return types.isEmpty || types.contains(.sleep)
+            }
+            
+            if event.type == .goal {
+                return types.contains(.goal)
             }
             
             return false

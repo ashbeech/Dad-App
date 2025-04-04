@@ -10,7 +10,7 @@ import SwiftUI
 struct AddEventView: View {
     @EnvironmentObject var dataStore: DataStore
     @Environment(\.presentationMode) var presentationMode
-    @State private var eventType: EventType = .feed
+    @State private var eventType: EventType = .goal
     @State private var offset: CGFloat = 0
     
     let date: Date
@@ -52,6 +52,9 @@ struct AddEventView: View {
                         .environmentObject(dataStore)
                 } else if eventType == .sleep {
                     AddSleepView(date: date, initialTime: initialTime)
+                        .environmentObject(dataStore)
+                } else if eventType == .goal {
+                    AddGoalView(date: date, initialTime: initialTime)
                         .environmentObject(dataStore)
                 } else {
                     AddTaskView(date: date, initialTime: initialTime)

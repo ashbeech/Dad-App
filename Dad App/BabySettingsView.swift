@@ -33,12 +33,6 @@ struct BabySettingsView: View {
                     DatePicker("Bed Time", selection: $bedTime, displayedComponents: .hourAndMinute)
                 }
                 
-                Section(header: Text("Templates")) {
-                    NavigationLink(destination: TemplatesView()) {
-                        Text("Manage Feed & Sleep Templates")
-                    }
-                }
-                
                 Button(action: saveSettings) {
                     Text("Save Settings")
                         .frame(maxWidth: .infinity)

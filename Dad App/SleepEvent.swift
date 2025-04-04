@@ -10,7 +10,7 @@ import Foundation
 struct SleepEvent: Identifiable, Codable {
     var id: UUID
     var date: Date
-    var notes: String
+    var notes: String // Keep this for compatibility, but don't expose it in UI
     var isTemplate: Bool
     var sleepType: SleepType
     var endTime: Date
@@ -18,12 +18,12 @@ struct SleepEvent: Identifiable, Codable {
     var isPaused: Bool
     var pauseIntervals: [PauseInterval]
     var lastPauseTime: Date?
-    var actualSleepDuration: TimeInterval? // New field for tracking actual sleep time
+    var actualSleepDuration: TimeInterval? // Field for tracking actual sleep time
     
     init(id: UUID = UUID(), date: Date, sleepType: SleepType, endTime: Date, notes: String = "", isTemplate: Bool = false, isOngoing: Bool = false, isPaused: Bool = false, pauseIntervals: [PauseInterval] = [], lastPauseTime: Date? = nil, actualSleepDuration: TimeInterval? = nil) {
         self.id = id
         self.date = date
-        self.notes = notes
+        self.notes = notes // Keep empty by default
         self.isTemplate = isTemplate
         self.sleepType = sleepType
         self.endTime = endTime
@@ -40,7 +40,6 @@ struct SleepEvent: Identifiable, Codable {
     
     static func fromEvent(_ event: Event, sleepType: SleepType = .nap, endTime: Date? = nil) -> SleepEvent {
         let end = endTime ?? event.date.addingTimeInterval(30 * 60)
-        return SleepEvent(id: event.id, date: event.date, sleepType: sleepType, endTime: end, notes: event.notes, isTemplate: event.isTemplate)
+        return SleepEvent(id: event.id, date: event.date, sleepType: sleepType, endTime: end, notes: "", isTemplate: event.isTemplate)
     }
 }
-

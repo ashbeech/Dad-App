@@ -14,11 +14,8 @@ struct AddSleepView: View {
     let date: Date
     let initialTime: Date
     
-    @State private var sleepType: SleepType = .nap // Only naps can be added manually
     @State private var startTime: Date
     @State private var endTime: Date
-    @State private var notes: String = ""
-    @State private var isTemplate: Bool = false
     @State private var showEndTime: Bool = false
     @State private var startImmediately: Bool = true
     
@@ -59,12 +56,6 @@ struct AddSleepView: View {
     
     var body: some View {
         Form {
-            Section(header: Text("Sleep Type")) {
-                // Only allow adding naps, not wake or bedtime
-                Text("Nap")
-                    .font(.headline)
-            }
-            
             Section(header: Text("Timing")) {
                 if showEndTime {
                     // Only show start time field if end time is being shown
@@ -127,22 +118,6 @@ struct AddSleepView: View {
                 }
             }
             
-            Section(header: Text("Notes")) {
-                TextField("Any special notes", text: $notes)
-            }
-            
-            Section {
-                Toggle("Save as template", isOn: $isTemplate)
-                    .toggleStyle(SwitchToggleStyle(tint: .blue))
-                    .onChange(of: isTemplate) { _, newValue in
-                        // If saving as template, always show end time option
-                        if newValue {
-                            showEndTime = true
-                            checkForOverlappingNaps()
-                        }
-                    }
-            }
-            
             // Warning message if save button is disabled due to overlap
             if let overlap = overlappingNap {
                 VStack(alignment: .leading, spacing: 8) {
@@ -184,12 +159,19 @@ struct AddSleepView: View {
             }
             
             Button(action: saveEvent) {
-                Text("Save Nap")
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(shouldDisableSaveButton ? Color.gray : Color.purple)
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
+                HStack {
+                    // Text changes based on whether end time is shown
+                    Text(showEndTime ? "Save Nap" : "Track Nap")
+                        .frame(maxWidth: .infinity)
+                    
+                    // Icon also changes based on whether end time is shown
+                    Image(systemName: showEndTime ? "moon.zzz.fill" : "play.fill")
+                        .font(.system(size: 16))
+                }
+                .padding()
+                .background(shouldDisableSaveButton ? Color.gray : Color.purple)
+                .foregroundColor(.white)
+                .cornerRadius(10)
             }
             .buttonStyle(PlainButtonStyle())
             .padding()
@@ -268,34 +250,19 @@ struct AddSleepView: View {
         // If not showing end time, use current time (now) as start time
         let effectiveStartTime = showEndTime ? startTime : Date()
         
-        let sleepEvent = SleepEvent(
+        let napEvent = SleepEvent(
             date: effectiveStartTime,
             sleepType: .nap, // Only allow naps
             endTime: showEndTime ? endTime : placeholderEndTime, // Use actual end time only if specified
-            notes: notes,
+            notes: "",
             isTemplate: false,
             isOngoing: !showEndTime && startImmediately, // Ongoing if no end time and starting now
             isPaused: false,
-            pauseIntervals: [],
-            lastPauseTime: nil
+            pauseIntervals: []
         )
         
-        // Add event for the day
-        dataStore.addSleepEvent(sleepEvent, for: date)
-        
-        // If it's a template, add it to the baby's templates
-        if isTemplate {
-            var updatedBaby = dataStore.baby
-            updatedBaby.sleepTemplates.append(SleepEvent(
-                date: startTime,
-                sleepType: .nap,
-                endTime: showEndTime ? endTime : startTime.addingTimeInterval(30 * 60),
-                notes: notes,
-                isTemplate: true
-            ))
-            
-            dataStore.baby = updatedBaby
-        }
+        // Add the nap to the data store
+        dataStore.addSleepEvent(napEvent, for: date)
         
         // Provide haptic feedback for successful save
         let generator = UIImpactFeedbackGenerator(style: .medium)
@@ -303,17 +270,18 @@ struct AddSleepView: View {
         
         // Post notification to immediately set this as active event
         if !showEndTime && startImmediately {
-            // ONLY post notification after we're sure everything is saved properly
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                // Create active event from this sleep event
-                let activeEvent = ActiveEvent.from(sleepEvent: sleepEvent)
-                
-                // Post notification with the active event
-                NotificationCenter.default.post(
-                    name: NSNotification.Name("SetActiveNap"),
-                    object: activeEvent
-                )
-            }
+            // CRITICAL FIX: Always create active event after we save it properly
+            let activeEvent = ActiveEvent.from(sleepEvent: napEvent)
+            
+            // Post notification to set active immediately - DON'T delay this
+            NotificationCenter.default.post(
+                name: NSNotification.Name("SetActiveNap"),
+                object: activeEvent
+            )
+            
+            // CRITICAL FIX: Also set the currentActiveEvent directly in the dataStore
+            // This way, even if the notification fails, the UI will still update
+            dataStore.objectWillChange.send()
         }
         
         presentationMode.wrappedValue.dismiss()

@@ -59,6 +59,13 @@ struct EditEventView: View {
                             Text("Could not find task event details")
                                 .foregroundColor(.red)
                         }
+                    case .goal:
+                        if let goalEvent = dataStore.getGoalEvent(id: event.id, for: date) {
+                            EditGoalView(goalEvent: goalEvent, date: date)
+                        } else {
+                            Text("Could not find goal event details")
+                                .foregroundColor(.red)
+                        }
                     }
                 }
                 

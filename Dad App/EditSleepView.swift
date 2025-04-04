@@ -17,7 +17,6 @@ struct EditSleepView: View {
     @State private var sleepType: SleepType
     @State private var startTime: Date
     @State private var endTime: Date
-    @State private var notes: String
     @State private var isOngoing: Bool
     @State private var isPaused: Bool
     @State private var pauseIntervals: [PauseInterval]
@@ -32,7 +31,6 @@ struct EditSleepView: View {
         _sleepType = State(initialValue: sleepEvent.sleepType)
         _startTime = State(initialValue: sleepEvent.date)
         _endTime = State(initialValue: sleepEvent.endTime)
-        _notes = State(initialValue: sleepEvent.notes)
         _isOngoing = State(initialValue: sleepEvent.isOngoing)
         _isPaused = State(initialValue: sleepEvent.isPaused)
         _pauseIntervals = State(initialValue: sleepEvent.pauseIntervals)
@@ -51,13 +49,6 @@ struct EditSleepView: View {
                             .foregroundColor(sleepEvent.sleepType == .waketime ? .orange : .blue)
                     }
                 }
-            } else {
-                Section(header: Text("Sleep Type")) {
-                    Picker("Type", selection: $sleepType) {
-                        Text("Nap").tag(SleepType.nap)
-                    }
-                    .pickerStyle(SegmentedPickerStyle())
-                }
             }
             
             Section(header: Text("Timing")) {
@@ -73,10 +64,6 @@ struct EditSleepView: View {
                             }
                         }
                 }
-            }
-            
-            Section(header: Text("Notes")) {
-                TextField("Any special notes", text: $notes)
             }
             
             // Only show tracking controls for nap events
@@ -209,12 +196,13 @@ struct EditSleepView: View {
             date: startTime,
             sleepType: sleepEvent.sleepType,
             endTime: finalEndTime,
-            notes: notes,
-            isTemplate: sleepEvent.isTemplate,
+            notes: "",
+            isTemplate: false,
             isOngoing: isOngoing,
             isPaused: isPaused,
             pauseIntervals: pauseIntervals,
-            lastPauseTime: lastPauseTime
+            lastPauseTime: lastPauseTime,
+            actualSleepDuration: sleepEvent.actualSleepDuration
         )
         
         dataStore.updateSleepEvent(updatedEvent, for: date)

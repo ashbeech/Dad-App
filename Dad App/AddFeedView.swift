@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 struct AddFeedView: View {
     @EnvironmentObject var dataStore: DataStore
@@ -20,7 +21,6 @@ struct AddFeedView: View {
     @State private var feedTime: Date
     @State private var prepTime: Date
     @State private var notes: String = ""
-    @State private var isTemplate: Bool = false
     
     @State private var offset: CGFloat = 0
     @State private var buttonScale: CGFloat = 1.0
@@ -80,12 +80,18 @@ struct AddFeedView: View {
             }
             
             Section(header: Text("Notes")) {
-                TextField("Any special notes", text: $notes)
-            }
-            
-            Section {
-                Toggle("Save as template", isOn: $isTemplate)
-                    .toggleStyle(SwitchToggleStyle(tint: .blue))
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $notes)
+                        .frame(height: 100)
+                        .padding(.horizontal, -4)
+                    
+                    if notes.isEmpty {
+                        Text("Any special notes")
+                            .foregroundColor(.gray)
+                            .padding(.top, 8)
+                            .padding(.leading, 4)
+                    }
+                }
             }
             
             Button(action: {
@@ -131,22 +137,6 @@ struct AddFeedView: View {
         
         // Add event for the day
         dataStore.addFeedEvent(feedEvent, for: date)
-        
-        // If it's a template, add it to the baby's templates
-        if isTemplate {
-            var updatedBaby = dataStore.baby
-            updatedBaby.feedTemplates.append(FeedEvent(
-                date: feedTime,
-                amount: amount,
-                breastMilkPercentage: breastMilkPercentage,
-                formulaPercentage: formulaPercentage,
-                preparationTime: prepTime,
-                notes: notes,
-                isTemplate: true
-            ))
-            
-            dataStore.baby = updatedBaby
-        }
         
         // Ensure we dismiss the entire view
         DispatchQueue.main.async {

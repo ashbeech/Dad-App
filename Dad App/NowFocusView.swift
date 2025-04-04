@@ -37,7 +37,8 @@ struct NowFocusView: View {
                         .font(.system(size: 24, weight: .bold, design: .monospaced))
                         .foregroundColor(sleepEvent.isPaused ? .yellow : .white)
                         .padding(.bottom, 10)
-                        .id(timerID) // Force refresh of just the time display
+                        .transition(.opacity) // Add transition for smooth updates
+                        .id("\(timerID)-text") // Force refresh with a compound ID
                     
                     HStack(spacing: 20) {
                         Button(action: {
@@ -76,26 +77,8 @@ struct NowFocusView: View {
                     localIsPaused = sleepEvent.isPaused
                     updateDisplayTime(sleepEvent: sleepEvent)
                     
-                    /*
-                    // Listen for pause state changes
-                    NotificationCenter.default.addObserver(
-                        forName: NSNotification.Name("NapPauseStateChanged"),
-                        object: nil,
-                        queue: .main
-                    ) { notification in
-                        if let eventId = notification.object as? UUID,
-                           eventId == activeEvent.id,
-                           let updatedSleepEvent = dataStore.getSleepEvent(id: activeEvent.id, for: date) {
-                            // Update our local state
-                            localIsPaused = updatedSleepEvent.isPaused
-                            print("NowFocusView received pause change: isPaused=\(localIsPaused)")
-                            
-                            // Update duration immediately and force refresh
-                            updateDisplayTime(sleepEvent: updatedSleepEvent)
-                            timerID = UUID()
-                        }
-                    }
-                     */
+                    // CRITICAL FIX: Check for any ongoing naps immediately
+                    checkForOngoingNaps()
                     
                     // Listen for new active nap notifications
                     NotificationCenter.default.addObserver(
@@ -104,12 +87,21 @@ struct NowFocusView: View {
                         queue: .main
                     ) { notification in
                         if let newActiveEvent = notification.object as? ActiveEvent {
+                            // CRITICAL FIX: Print to confirm we received the notification
+                            print("NowFocusView received SetActiveNap notification: \(newActiveEvent.id)")
+                            
                             // Set this as the current active event
-                            currentActiveEvent = newActiveEvent
+                            self.currentActiveEvent = newActiveEvent
                             
                             // Force immediate refresh
-                            //viewRefreshTrigger = UUID()
-                            timerID = UUID()
+                            self.viewRefreshTrigger = UUID()
+                            self.timerID = UUID()
+                            
+                            // CRITICAL FIX: Update any UI state
+                            if let sleepEvent = dataStore.getSleepEvent(id: newActiveEvent.id, for: date) {
+                                localIsPaused = sleepEvent.isPaused
+                                updateDisplayTime(sleepEvent: sleepEvent)
+                            }
                         }
                     }
                     
@@ -121,9 +113,38 @@ struct NowFocusView: View {
                         // Force reset the currentActiveEvent state
                         DispatchQueue.main.async {
                             self.currentActiveEvent = nil
+                            self.viewRefreshTrigger = UUID()
                         }
                     }
                     
+                    // CRITICAL FIX: Add observer for general events changed notification
+                    NotificationCenter.default.addObserver(
+                        forName: NSNotification.Name("EventDataChanged"),
+                        object: nil,
+                        queue: .main
+                    ) { _ in
+                        // Check if we need to update our active nap
+                        self.checkForOngoingNaps()
+                    }
+                    
+                    // Listen for pause state changes
+                    NotificationCenter.default.addObserver(
+                        forName: NSNotification.Name("NapPauseStateChanged"),
+                        object: nil,
+                        queue: .main
+                    ) { notification in
+                        if let eventId = notification.object as? UUID,
+                           eventId == activeEvent.id,
+                           let updatedSleepEvent = dataStore.getSleepEvent(id: activeEvent.id, for: date) {
+                            // Update our local state
+                            localIsPaused = updatedSleepEvent.isPaused
+                            print("EventRow received pause change: isPaused=\(localIsPaused)")
+                            
+                            // Update duration immediately
+                            updateDisplayTime(sleepEvent: updatedSleepEvent)
+                            timerID = UUID()
+                        }
+                    }
                 }
                 .onDisappear {
                     NotificationCenter.default.removeObserver(self)
@@ -141,14 +162,14 @@ struct NowFocusView: View {
                 // Show the next upcoming event when no active event and it's today
                 NextEventInfoView(date: date)
                     .environmentObject(dataStore)
-                    // CRITICAL FIX: Add ID using the viewRefreshTrigger to ensure view updates
+                // CRITICAL FIX: Add ID using the viewRefreshTrigger to ensure view updates
                     .id("next-event-\(viewRefreshTrigger)")
             } else if isPastDate(date) {
                 // For past dates, show a message
                 PastDateView(date: date)
             } else if Calendar.current.isDateInToday(date) && isAfterBedtime() {
                 DayCompletionView()
-                    // CRITICAL FIX: Add ID using the viewRefreshTrigger to ensure view updates
+                // CRITICAL FIX: Add ID using the viewRefreshTrigger to ensure view updates
                     .id("day-completion-\(viewRefreshTrigger)")
             } else {
                 // Show daily summary for future dates only
@@ -178,6 +199,9 @@ struct NowFocusView: View {
                 // Force a refresh
                 viewRefreshTrigger = UUID()
                 
+                // CRITICAL FIX: Check for ongoing naps immediately
+                checkForOngoingNaps()
+                
                 // Register for application state notifications
                 NotificationCenter.default.addObserver(
                     forName: UIApplication.didBecomeActiveNotification,
@@ -187,6 +211,9 @@ struct NowFocusView: View {
                     print("NowFocusView detected app became active")
                     // Force view refresh when app becomes active
                     self.viewRefreshTrigger = UUID()
+                    
+                    // CRITICAL FIX: Check for ongoing naps when app becomes active
+                    self.checkForOngoingNaps()
                 }
             }
         }
@@ -196,13 +223,44 @@ struct NowFocusView: View {
                 print("NowFocusView detected day change")
                 // Force refresh on day change
                 viewRefreshTrigger = UUID()
+                
+                // CRITICAL FIX: Check for ongoing naps on day change
+                checkForOngoingNaps()
             }
         }
         // CRITICAL FIX: Connect to the shared timer to force periodic refreshes
         .onReceive(timerManager.$timerTick) { _ in
             // On every 10th tick, force a complete refresh if needed
             if timerManager.timerTick % 10 == 0 && Calendar.current.isDateInToday(date) {
-                //viewRefreshTrigger = UUID()
+                // Check for ongoing naps on periodic intervals
+                checkForOngoingNaps()
+            }
+        }
+    }
+    
+    // CRITICAL FIX: Add this helper method to check for ongoing naps
+    private func checkForOngoingNaps() {
+        // Get all events for today
+        let ongoingNaps = dataStore.getOngoingSleepEvents(for: date)
+        
+        // If there's an ongoing nap and we don't have an active event yet, set it
+        if let ongoingNap = ongoingNaps.first(where: { $0.sleepType == .nap }),
+           (currentActiveEvent == nil || currentActiveEvent?.id != ongoingNap.id) {
+            print("NowFocusView found ongoing nap: \(ongoingNap.id)")
+            
+            // Create an active event from this ongoing nap
+            let activeEvent = ActiveEvent.from(sleepEvent: ongoingNap)
+            
+            // Set as active event
+            self.currentActiveEvent = activeEvent
+            
+            // Force refresh
+            self.viewRefreshTrigger = UUID()
+            self.timerID = UUID()
+            
+            // Update display time
+            if let sleepEvent = dataStore.getSleepEvent(id: activeEvent.id, for: date) {
+                updateDisplayTime(sleepEvent: sleepEvent)
             }
         }
     }
@@ -222,7 +280,6 @@ struct NowFocusView: View {
         if !sleepEvent.isPaused && sleepEvent.isOngoing {
             var modifiedSleepEvent = sleepEvent
             modifiedSleepEvent.actualSleepDuration = elapsedTime
-            // TODO: Maybe not most efficient thinng to be doing; saving every second to datastore.
             dataStore.updateSleepEvent(modifiedSleepEvent, for: date)
         }
         
@@ -230,9 +287,29 @@ struct NowFocusView: View {
         let newDisplayTime = timerManager.formatDuration(elapsedTime)
         
         if newDisplayTime != displayTime {
-            displayTime = newDisplayTime
-            // Force refresh of the display when time changes
-            timerID = UUID()
+            // CRITICAL FIX: When transitioning between paused and unpaused states,
+            // use a nice transition effect
+            if localIsPaused != sleepEvent.isPaused {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    displayTime = ""
+                    timerID = UUID()
+                    
+                    // Brief delay before showing the new time
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            displayTime = newDisplayTime
+                        }
+                    }
+                }
+            } else {
+                // For regular time updates just update the value
+                displayTime = newDisplayTime
+                // Force refresh of the display when time changes
+                // but not on every tick to avoid performance issues
+                if Int(elapsedTime) % 5 == 0 {
+                    timerID = UUID()
+                }
+            }
         }
     }
     
@@ -326,7 +403,7 @@ struct NowFocusView: View {
         let displayedDuration = timerManager.calculateEffectiveDuration(sleepEvent: updatedSleepEvent)
         
         // Force log the exact duration we're saving
-        //print("SAVING EXACT TIMER DURATION: \(formatDuration(displayedDuration))")
+        print("SAVING EXACT TIMER DURATION: \(formatDuration(displayedDuration))")
         
         // Explicitly set this duration as the actual sleep duration
         modifiedSleepEvent.actualSleepDuration = displayedDuration
@@ -344,7 +421,7 @@ struct NowFocusView: View {
         
         // Verify the data was saved correctly by retrieving it again
         if let verifiedEvent = dataStore.getSleepEvent(id: sleepEvent.id, for: date) {
-            //print("VERIFICATION - Saved duration: \(formatDuration(verifiedEvent.actualSleepDuration ?? 0))")
+            print("VERIFICATION - Saved duration: \(formatDuration(verifiedEvent.actualSleepDuration ?? 0))")
         }
         
         // Post notification to update UI
@@ -671,11 +748,11 @@ struct NextEventInfoView: View {
             nextEvent = newNextEvent
             
             /*
-            if let next = nextEvent {
-                //print("Found new next event: \(titleForEvent(next.event)) in \(formatTimeRemaining(next.timeRemaining))")
-            } else {
-                //print("No upcoming events found")
-            }
+             if let next = nextEvent {
+             //print("Found new next event: \(titleForEvent(next.event)) in \(formatTimeRemaining(next.timeRemaining))")
+             } else {
+             //print("No upcoming events found")
+             }
              */
         }
     }
@@ -722,6 +799,8 @@ struct NextEventInfoView: View {
             return "Next Sleep"
         case .task:
             return "Next Task"
+        case .goal:
+            return "Next Goal"
         }
     }
     
@@ -743,6 +822,8 @@ struct NextEventInfoView: View {
             return "moon.zzz.fill"
         case .task:
             return "checkmark.circle.fill"
+        case .goal:
+            return "checkmark.circle.fill"
         }
     }
     
@@ -763,6 +844,8 @@ struct NextEventInfoView: View {
             }
             return .purple
         case .task:
+            return .green
+        case .goal:
             return .green
         }
     }
@@ -806,13 +889,6 @@ struct FutureDateSummaryView: View {
                 
                 // Content with clipping to ensure it stays in circle
                 VStack(spacing: 3) {
-                    /*
-                     Text("Plan")
-                     .font(.title3)
-                     .foregroundColor(.gray)
-                     .lineLimit(1)
-                     .minimumScaleFactor(0.7)
-                     */
                     // Horizontal pager (custom implementation)
                     ZStack {
                         // Only show the current page
@@ -883,20 +959,6 @@ struct FutureDateSummaryView: View {
                         }
                     }
                     .padding(.bottom, 3)
-                    
-                    /*
-                     // Daily tip
-                     Text(getDailyTip())
-                     .font(.footnote)
-                     .foregroundColor(.primary)
-                     .multilineTextAlignment(.center)
-                     .lineLimit(2)
-                     .minimumScaleFactor(0.7)
-                     .padding(10)
-                     .background(Color.blue.opacity(0.1))
-                     .cornerRadius(8)
-                     .padding(.horizontal, diameter * 0.05)
-                     */
                 }
                 .padding(diameter * 0.05)
                 .frame(width: diameter + 25, height: diameter + 25)
@@ -937,8 +999,6 @@ struct FutureDateSummaryView: View {
             }
         }
     }
-    
-    // All the existing helper methods remain the same
     
     private func formattedDate() -> String {
         let formatter = DateFormatter()
@@ -1546,17 +1606,6 @@ struct TaskSummaryCard: View {
             
             HStack(spacing: 15) {
                 VStack {
-                    Text("High priority")
-                    Text("\(highPriorityCount())")
-                        .fontWeight(.medium)
-                }
-                .font(.caption)
-                .padding(.top, 5)
-                
-                Divider()
-                    .frame(height: 30)
-                
-                VStack {
                     Text("Next task")
                     Text(nextTaskTime())
                         .fontWeight(.medium)
@@ -1589,20 +1638,6 @@ struct TaskSummaryCard: View {
         }
         
         return completedCount
-    }
-    
-    private func highPriorityCount() -> Int {
-        let events = dataStore.getEvents(for: date).filter { $0.type == .task }
-        var highPriorityCount = 0
-        
-        for event in events {
-            if let taskEvent = dataStore.getTaskEvent(id: event.id, for: date),
-               taskEvent.priority == .high {
-                highPriorityCount += 1
-            }
-        }
-        
-        return highPriorityCount
     }
     
     private func nextTaskTime() -> String {

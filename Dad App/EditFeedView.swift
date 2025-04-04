@@ -70,7 +70,18 @@ struct EditFeedView: View {
             }
             
             Section(header: Text("Notes")) {
-                TextField("Any special notes", text: $notes)
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $notes)
+                        .frame(height: 100)
+                        .padding(.horizontal, -4)
+                    
+                    if notes.isEmpty {
+                        Text("Any special notes")
+                            .foregroundColor(.gray)
+                            .padding(.top, 8)
+                            .padding(.leading, 4)
+                    }
+                }
             }
             
             HStack {
@@ -144,7 +155,7 @@ struct EditFeedView: View {
             formulaPercentage: formulaPercentage,
             preparationTime: prepTime,
             notes: notes,
-            isTemplate: feedEvent.isTemplate
+            isTemplate: false
         )
         
         dataStore.updateFeedEvent(updatedEvent, for: date)

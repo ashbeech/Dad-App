@@ -13,9 +13,10 @@ struct CategoryBarView: View {
     // All possible categories (expandable for future)
     private let categories: [(title: String, type: [EventType]?)] = [
         ("All", nil),
+        ("Goals", [.goal]),
         ("Feed", [.feed]),
         ("Sleep", [.sleep]),
-        ("Tasks", [.task]) // Placeholder for future implementation
+        ("Tasks", [.task])
     ]
 
     var body: some View {
