@@ -2,7 +2,7 @@
 //  ActiveEvent.swift
 //  Dad App
 //
-//  Created by Ashley Davison on 08/03/2025.
+//  Created by Ash Beech on 08/03/2025.
 //
 
 import Foundation
