@@ -5,6 +5,7 @@
 ## What This App Does
 
 Users enter ambitious goals (e.g., "Launch a SaaS product") and the AI:
+
 1. Breaks the goal into **milestones** (major checkpoints)
 2. Generates **actionable tasks** scheduled across days/weeks
 3. Learns from user behavior to **personalize future plans**
@@ -96,6 +97,7 @@ Dad App/
 ## Data Models
 
 ### GoalEvent
+
 The top-level container for a user's ambition.
 
 ```swift
@@ -111,6 +113,7 @@ struct GoalEvent: Identifiable, Codable {
 ```
 
 ### Milestone
+
 Intermediate checkpoints between goal start and completion.
 
 ```swift
@@ -126,6 +129,7 @@ struct Milestone: Identifiable, Codable {
 ```
 
 ### TaskEvent
+
 Individual actionable tasks with scheduling info.
 
 ```swift
@@ -145,6 +149,7 @@ struct TaskEvent: Identifiable, Codable {
 ```
 
 ### TaskObservation
+
 Records what happens to tasks for behavioral learning.
 
 ```swift
@@ -154,17 +159,17 @@ struct TaskObservation: Identifiable, Codable {
     let goalId: UUID?
     let timestamp: Date
     let eventType: ObservationEventType  // .completed, .rescheduled, .edited, .skipped
-    
+
     // Context
     let dayOfWeek: Int              // 1-7
     let hourOfDay: Int              // 0-23
     let timeBlock: TimeBlock?       // morning/afternoon/evening
-    
+
     // Completion data
     let estimatedMinutes: Int?
     let actualMinutes: Int?
     let wasOnTime: Bool?
-    
+
     // Edit/reschedule data
     let previousTitle: String?
     let newTitle: String?
@@ -174,6 +179,7 @@ struct TaskObservation: Identifiable, Codable {
 ```
 
 ### UserExecutionProfile
+
 Calculated metrics from observations.
 
 ```swift
@@ -186,12 +192,13 @@ struct UserExecutionProfile: Codable {
     let mostProductiveDay: Int?                 // 1-7
     let completionRateByDuration: [String: Double]  // "short", "medium", "long"
     let observationCount: Int
-    
+
     func toPromptSummary() -> String?           // For AI prompt inclusion
 }
 ```
 
 ### UserPreferences
+
 User's stated scheduling preferences.
 
 ```swift
@@ -243,6 +250,7 @@ struct UserPreferences: Codable {
 Generate milestones and tasks for a goal.
 
 **Request:**
+
 ```json
 {
   "goal": "Launch a SaaS product",
@@ -260,12 +268,17 @@ Generate milestones and tasks for a goal.
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
   "goal": "Launch a SaaS product",
   "milestones": [
-    { "title": "Define Product Vision", "targetDate": "2026-01-31", "order": 1 },
+    {
+      "title": "Define Product Vision",
+      "targetDate": "2026-01-31",
+      "order": 1
+    },
     { "title": "Build MVP", "targetDate": "2026-03-15", "order": 2 }
   ],
   "tasks": [
@@ -286,6 +299,7 @@ Generate milestones and tasks for a goal.
 Health check endpoint.
 
 **Response:**
+
 ```json
 {
   "status": "ok",
@@ -299,6 +313,7 @@ Health check endpoint.
 ## Setup Instructions
 
 ### Prerequisites
+
 - Xcode 15+
 - Node.js 18+
 - Groq API key (free at https://console.groq.com/keys)
@@ -323,6 +338,7 @@ Server runs at `http://localhost:3000`
 3. Build and run on simulator
 
 **For physical device testing:**
+
 - Find your Mac's IP: `ifconfig | grep "inet " | grep -v 127.0.0.1`
 - Update `AIService.swift` baseURL to use your IP instead of localhost
 
@@ -339,22 +355,26 @@ curl -s -X POST http://localhost:3000/api/breakdown \
 ## Implementation Phases
 
 ### Phase 1: Context-Aware Scheduling ✅
+
 - AI generates milestones and tasks with actual scheduled dates
 - Tasks spread across timeline toward deadline
 - Basic preferences (hours/day, time blocks, work days)
 
 ### Phase 2: User Preferences UI ✅
+
 - PreferencesView for configuring scheduling preferences
 - Preferences persisted and sent with API requests
 - AI respects stated preferences
 
 ### Phase 3: Behavioral Learning ✅
+
 - TaskObservation tracks completions, edits, reschedules, skips
 - UserExecutionProfile calculated from observations
 - Exponential decay weighting (recent behavior matters more)
 - Profile included in AI prompts when enough data exists (10+ observations)
 
 ### Phase 3.5: AI Personalization ✅
+
 - Server includes behavioral profile in LLM prompt
 - AI adjusts scheduling based on learned patterns
 - Graceful degradation when no profile data exists
@@ -365,29 +385,32 @@ curl -s -X POST http://localhost:3000/api/breakdown \
 
 If you're an AI picking up development, focus on these files:
 
-| File | Purpose |
-|------|---------|
-| `DataStore.swift` | Central state management, persistence, observation recording |
-| `AIService.swift` | HTTP client for server communication |
-| `server/server.js` | Express server with Groq LLM integration |
-| `AddGoalView.swift` | Goal creation UI and flow |
-| `UserExecutionProfile.swift` | Behavioral metrics calculation |
+| File                         | Purpose                                                      |
+| ---------------------------- | ------------------------------------------------------------ |
+| `DataStore.swift`            | Central state management, persistence, observation recording |
+| `AIService.swift`            | HTTP client for server communication                         |
+| `server/server.js`           | Express server with Groq LLM integration                     |
+| `AddGoalView.swift`          | Goal creation UI and flow                                    |
+| `UserExecutionProfile.swift` | Behavioral metrics calculation                               |
 
 ---
 
 ## Future Development (Not Yet Implemented)
 
 ### Phase 4: Adaptive Replanning
+
 - Automatic plan adjustment when tasks are missed
 - Trigger-based replanning (missed 3+ tasks, deadline changed, etc.)
 - AI regenerates only affected portions of the plan
 
 ### Phase 5: Multi-Goal Orchestration
+
 - Multiple active goals competing for time
 - Priority ranking and time allocation
 - Conflict detection and resolution
 
 ### UI Modernization
+
 - Rename app from "Dad App" to "Ambition"
 - Remove baby-tracking features
 - New onboarding flow focused on goals
@@ -398,6 +421,7 @@ If you're an AI picking up development, focus on these files:
 ## Environment Variables
 
 ### Server (.env)
+
 ```
 GROQ_API_KEY=gsk_your_key_here
 PORT=3000
@@ -405,6 +429,7 @@ NODE_ENV=development
 ```
 
 ### iOS (AIService.swift)
+
 ```swift
 #if DEBUG
 return "http://localhost:3000"      // Simulator
@@ -419,6 +444,7 @@ return "https://your-app.railway.app"  // Production
 ## Persistence
 
 All data is stored in **UserDefaults** (iOS):
+
 - `baby` - Baby settings (legacy)
 - `events` - General events
 - `goalEvents` - Goals
@@ -438,5 +464,4 @@ Private / Proprietary
 
 ## Contact
 
-Ashley Davison
-
+Ash Beech
