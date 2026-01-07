@@ -16,9 +16,17 @@ class DataStore: ObservableObject {
     private let feedEventsKey = "feedEvents"
     private let sleepEventsKey = "sleepEvents"
     private let taskEventsKey = "taskEvents"
+    private let milestonesKey = "milestones"          // Phase 1
+    private let userPreferencesKey = "userPreferences" // Phase 1
+    private let observationsKey = "taskObservations"    // Phase 3
+    private let executionProfileKey = "executionProfile" // Phase 3
     
     private var deletedEventsCache: [UUID: DeletedEventState] = [:]
     private var deletionTimers: [UUID: Timer] = [:]
+    
+    // Phase 3: Observation tracking
+    @Published var taskObservations: [TaskObservation] = []
+    @Published var executionProfile: UserExecutionProfile = .empty
     
     @Published var baby: Baby
     @Published var events: [String: [Event]] = [:]
@@ -26,6 +34,8 @@ class DataStore: ObservableObject {
     @Published var sleepEvents: [String: [SleepEvent]] = [:]
     @Published var taskEvents: [String: [TaskEvent]] = [:]
     @Published var goalEvents: [String: [GoalEvent]] = [:]
+    @Published var milestones: [UUID: Milestone] = [:]  // Phase 1: keyed by milestone ID
+    @Published var userPreferences: UserPreferences = .default  // Phase 1
     @Published var isPastDateEditingEnabled: Bool = false
     
     // For undo/redo functionality
@@ -70,6 +80,33 @@ class DataStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: taskEventsKey),
            let taskEvents = try? JSONDecoder().decode([String: [TaskEvent]].self, from: data) {
             self.taskEvents = taskEvents
+        }
+        
+        // Phase 1: Load milestones
+        if let data = UserDefaults.standard.data(forKey: milestonesKey),
+           let milestones = try? JSONDecoder().decode([UUID: Milestone].self, from: data) {
+            self.milestones = milestones
+        }
+        
+        // Phase 1: Load user preferences
+        if let data = UserDefaults.standard.data(forKey: userPreferencesKey),
+           let prefs = try? JSONDecoder().decode(UserPreferences.self, from: data) {
+            self.userPreferences = prefs
+        }
+        
+        // Phase 3: Load observations
+        if let data = UserDefaults.standard.data(forKey: observationsKey),
+           let observations = try? JSONDecoder().decode([TaskObservation].self, from: data) {
+            self.taskObservations = observations
+        }
+        
+        // Phase 3: Load or calculate execution profile
+        if let data = UserDefaults.standard.data(forKey: executionProfileKey),
+           let profile = try? JSONDecoder().decode(UserExecutionProfile.self, from: data) {
+            self.executionProfile = profile
+        } else {
+            // Calculate from observations if we have them
+            self.executionProfile = UserExecutionProfile.calculate(from: self.taskObservations)
         }
         
         // Save when data changes
@@ -120,6 +157,42 @@ class DataStore: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+        
+        // Phase 1: Save milestones
+        $milestones
+            .sink { [weak self] milestones in
+                if let encoded = try? JSONEncoder().encode(milestones) {
+                    UserDefaults.standard.set(encoded, forKey: self?.milestonesKey ?? "")
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Phase 1: Save user preferences
+        $userPreferences
+            .sink { [weak self] prefs in
+                if let encoded = try? JSONEncoder().encode(prefs) {
+                    UserDefaults.standard.set(encoded, forKey: self?.userPreferencesKey ?? "")
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Phase 3: Save observations
+        $taskObservations
+            .sink { [weak self] observations in
+                if let encoded = try? JSONEncoder().encode(observations) {
+                    UserDefaults.standard.set(encoded, forKey: self?.observationsKey ?? "")
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Phase 3: Save execution profile
+        $executionProfile
+            .sink { [weak self] profile in
+                if let encoded = try? JSONEncoder().encode(profile) {
+                    UserDefaults.standard.set(encoded, forKey: self?.executionProfileKey ?? "")
+                }
+            }
+            .store(in: &cancellables)
     }
     
     func isEditingAllowed(for date: Date) -> Bool {
@@ -153,6 +226,142 @@ class DataStore: ObservableObject {
         NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
     }
     
+    func getTasksForGoal(_ goalId: UUID) -> [TaskEvent] {
+        var allTasks: [TaskEvent] = []
+        for (_, tasks) in taskEvents {
+            allTasks.append(contentsOf: tasks.filter { $0.parentGoalId == goalId })
+        }
+        return allTasks.sorted { ($0.orderInGoal ?? 0) < ($1.orderInGoal ?? 0) }
+    }
+    
+    // MARK: - Phase 1: Milestone Methods
+    
+    func addMilestone(_ milestone: Milestone) {
+        milestones[milestone.id] = milestone
+    }
+    
+    func getMilestone(_ id: UUID) -> Milestone? {
+        return milestones[id]
+    }
+    
+    func getMilestonesForGoal(_ goalId: UUID) -> [Milestone] {
+        return milestones.values
+            .filter { $0.goalId == goalId }
+            .sorted { $0.order < $1.order }
+    }
+    
+    func updateMilestone(_ milestone: Milestone) {
+        milestones[milestone.id] = milestone
+    }
+    
+    func deleteMilestone(_ id: UUID) {
+        milestones.removeValue(forKey: id)
+    }
+    
+    func completeMilestone(_ id: UUID) {
+        if var milestone = milestones[id] {
+            milestone.isCompleted = true
+            milestone.completedDate = Date()
+            milestones[id] = milestone
+        }
+    }
+    
+    /// Get tasks belonging to a specific milestone
+    func getTasksForMilestone(_ milestoneId: UUID) -> [TaskEvent] {
+        var allTasks: [TaskEvent] = []
+        for (_, tasks) in taskEvents {
+            allTasks.append(contentsOf: tasks.filter { $0.milestoneId == milestoneId })
+        }
+        return allTasks.sorted { ($0.orderInGoal ?? 0) < ($1.orderInGoal ?? 0) }
+    }
+    
+    /// Check if a milestone should be marked complete (all tasks done)
+    func updateMilestoneCompletion(_ milestoneId: UUID) {
+        let tasks = getTasksForMilestone(milestoneId)
+        let allCompleted = !tasks.isEmpty && tasks.allSatisfy { $0.completed }
+        
+        if var milestone = milestones[milestoneId] {
+            if allCompleted && !milestone.isCompleted {
+                milestone.isCompleted = true
+                milestone.completedDate = Date()
+                milestones[milestoneId] = milestone
+            } else if !allCompleted && milestone.isCompleted {
+                milestone.isCompleted = false
+                milestone.completedDate = nil
+                milestones[milestoneId] = milestone
+            }
+        }
+    }
+    
+    // MARK: - Phase 3: Observation Methods
+    
+    /// Record a task observation
+    func recordObservation(_ observation: TaskObservation) {
+        taskObservations.append(observation)
+        
+        // Recalculate profile periodically (every 5 new observations)
+        if taskObservations.count % 5 == 0 {
+            recalculateExecutionProfile()
+        }
+    }
+    
+    /// Record task completion
+    func recordTaskCompletion(_ task: TaskEvent, actualMinutes: Int? = nil) {
+        let observation = TaskObservation.completed(task: task, actualMinutes: actualMinutes)
+        recordObservation(observation)
+        
+        // Update milestone completion if task belongs to one
+        if let milestoneId = task.milestoneId {
+            updateMilestoneCompletion(milestoneId)
+        }
+        
+        // Update goal completion
+        if let goalId = task.parentGoalId {
+            updateGoalCompletion(goalId)
+        }
+    }
+    
+    /// Record task edit
+    func recordTaskEdit(_ task: TaskEvent, previousTitle: String, previousDuration: Int?) {
+        let observation = TaskObservation.edited(
+            task: task,
+            previousTitle: previousTitle,
+            previousDuration: previousDuration
+        )
+        recordObservation(observation)
+    }
+    
+    /// Record task reschedule
+    func recordTaskReschedule(_ task: TaskEvent, previousDate: Date, reason: String? = nil) {
+        let observation = TaskObservation.rescheduled(
+            task: task,
+            previousDate: previousDate,
+            reason: reason
+        )
+        recordObservation(observation)
+    }
+    
+    /// Record task skip
+    func recordTaskSkip(_ task: TaskEvent) {
+        let observation = TaskObservation.skipped(task: task)
+        recordObservation(observation)
+    }
+    
+    /// Recalculate the execution profile from all observations
+    func recalculateExecutionProfile() {
+        executionProfile = UserExecutionProfile.calculate(from: taskObservations)
+    }
+    
+    /// Get observation count for a specific task
+    func getObservationsForTask(_ taskId: UUID) -> [TaskObservation] {
+        return taskObservations.filter { $0.taskId == taskId }
+    }
+    
+    /// Get all observations for a goal
+    func getObservationsForGoal(_ goalId: UUID) -> [TaskObservation] {
+        return taskObservations.filter { $0.goalId == goalId }
+    }
+
     func addFeedEvent(_ event: FeedEvent, for date: Date) {
         let dateString = formatDate(date)
         
@@ -1324,6 +1533,18 @@ class DataStore: ObservableObject {
         }
     }
 
+    func updateGoalCompletion(_ goalId: UUID) {
+    let tasks = getTasksForGoal(goalId)
+    let allCompleted = !tasks.isEmpty && tasks.allSatisfy { $0.completed }
+    
+    for (dateString, goals) in goalEvents {
+        if let index = goals.firstIndex(where: { $0.id == goalId }) {
+            goalEvents[dateString]?[index].isCompleted = allCompleted
+            break
+        }
+    }
+}
+
     func updateSleepEvent(_ event: SleepEvent, for date: Date) {
         let dateString = formatDate(date)
         
@@ -1362,6 +1583,9 @@ class DataStore: ObservableObject {
     func updateTaskEvent(_ event: TaskEvent, for date: Date) {
         let dateString = formatDate(date)
         
+        // Phase 3: Get old task state for observation tracking
+        let oldTask = getTaskEvent(id: event.id, for: date)
+        
         // Always regenerate past tense title
         var updatedEvent = event
         updatedEvent.pastTenseTitle = TaskTitleConverter.shared.convertToPastTense(title: event.title)
@@ -1391,6 +1615,29 @@ class DataStore: ObservableObject {
                 
                 // Post notification about event update
                 NotificationCenter.default.post(name: NSNotification.Name("EventDataChanged"), object: event.id)
+            }
+        }
+        
+        // Phase 3: Record observations based on what changed
+        if let oldTask = oldTask {
+            // Check for completion status change
+            if !oldTask.completed && updatedEvent.completed {
+                recordTaskCompletion(updatedEvent)
+            }
+            
+            // Check for title or duration edit
+            if oldTask.title != updatedEvent.title || oldTask.estimatedMinutes != updatedEvent.estimatedMinutes {
+                recordTaskEdit(updatedEvent, previousTitle: oldTask.title, previousDuration: oldTask.estimatedMinutes)
+            }
+            
+            // Check for reschedule (date changed)
+            let calendar = Calendar.current
+            if let oldScheduled = oldTask.scheduledDate,
+               let newScheduled = updatedEvent.scheduledDate,
+               !calendar.isDate(oldScheduled, inSameDayAs: newScheduled) {
+                recordTaskReschedule(updatedEvent, previousDate: oldScheduled)
+            } else if !calendar.isDate(oldTask.date, inSameDayAs: updatedEvent.date) {
+                recordTaskReschedule(updatedEvent, previousDate: oldTask.date)
             }
         }
     }
@@ -1572,6 +1819,11 @@ class DataStore: ObservableObject {
     
     func deleteTaskEvent(_ event: TaskEvent, for date: Date) {
         let dateString = formatDate(date)
+        
+        // Phase 3: Record skip observation if task wasn't completed
+        if !event.completed && event.parentGoalId != nil {
+            recordTaskSkip(event)
+        }
         
         // Cache the event before deletion
         let deletedState = DeletedEventState(

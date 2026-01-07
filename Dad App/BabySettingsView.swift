@@ -14,6 +14,7 @@ struct BabySettingsView: View {
     @State private var babyName: String
     @State private var wakeTime: Date
     @State private var bedTime: Date
+    @State private var showingPreferences: Bool = false
     
     init() {
         _babyName = State(initialValue: "")
@@ -33,6 +34,22 @@ struct BabySettingsView: View {
                     DatePicker("Bed Time", selection: $bedTime, displayedComponents: .hourAndMinute)
                 }
                 
+                // Phase 2: Goal Preferences
+                Section(header: Text("Goal Planning")) {
+                    Button(action: { showingPreferences = true }) {
+                        HStack {
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundColor(.indigo)
+                            Text("Task Preferences")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                    }
+                    .foregroundColor(.primary)
+                }
+                
                 Button(action: saveSettings) {
                     Text("Save Settings")
                         .frame(maxWidth: .infinity)
@@ -44,7 +61,7 @@ struct BabySettingsView: View {
                 .buttonStyle(PlainButtonStyle())
                 .padding()
             }
-            .navigationTitle("Baby Settings")
+            .navigationTitle("Settings")
             .navigationBarItems(trailing: Button("Done") {
                 presentationMode.wrappedValue.dismiss()
             })
@@ -53,6 +70,10 @@ struct BabySettingsView: View {
                 babyName = dataStore.baby.name
                 wakeTime = dataStore.baby.wakeTime
                 bedTime = dataStore.baby.bedTime
+            }
+            .sheet(isPresented: $showingPreferences) {
+                PreferencesView()
+                    .environmentObject(dataStore)
             }
         }
     }

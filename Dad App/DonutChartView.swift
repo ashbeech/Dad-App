@@ -265,8 +265,6 @@ struct DonutChartView: View {
     
     // Helper function to create the previous day's arc
     private func createPreviousDayArc(geometry: GeometryProxy) -> some View {
-        let previousDayEvents = dataStore.getEvents(for: previousDate)
-        
         return ZStack {
             // Base arc for previous day
             PreciseArcStroke(
@@ -292,8 +290,6 @@ struct DonutChartView: View {
     
     // Helper function to create the next day's arc
     private func createNextDayArc(geometry: GeometryProxy) -> some View {
-        let nextDayEvents = dataStore.getEvents(for: nextDate)
-        
         return ZStack {
             // Base arc for next day
             PreciseArcStroke(
@@ -1885,18 +1881,7 @@ struct DonutChartView: View {
             generator.impactOccurred()
         }
         
-        // Convert delta to angle change (based on circle geometry)
-        let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
-        let startVector = CGPoint(x: dragState.dragStartLocation.x - center.x,
-                                  y: dragState.dragStartLocation.y - center.y)
-        let currentVector = CGPoint(x: value.location.x - center.x,
-                                    y: value.location.y - center.y)
-        
-        // Calculate angle between vectors
-        let startAngle = atan2(startVector.y, startVector.x)
-        let currentAngle = atan2(currentVector.y, currentVector.x)
-        
-        // Apply angle change to starting angle
+        // Calculate angle from current drag position
         let newAngle = angleFromPoint(value.location, geometry: geometry)
         let constrainedAngle = constrainAngleToArc(newAngle)
         let newTime = timeFromAngle(constrainedAngle)
@@ -2136,10 +2121,6 @@ struct DonutChartView: View {
     private func handleTaskEventDragEnd(value: DragGesture.Value, event: Event) {
         
         guard dataStore.isEditingAllowed(for: date) else { return }
-        
-        // Get fresh wake and bedtime constraints before updating
-        let wakeEvent = dataStore.findWakeEvent(for: date)
-        let bedtimeEvent = dataStore.findBedtimeEvent(for: date)
         
         // Recalculate angles based on current constraints
         dragState.dragAngle = angleForTime(dragState.dragTime)
@@ -3597,13 +3578,8 @@ struct ArcStroke: View {
                     // Use TapGesture with count: 2 for double tap
                     TapGesture(count: 2)
                         .onEnded { _ in
-                            // Use a more accurate method to detect tap location
-                            // For now, we'll use the existing angle calculation in DonutChartView
-                            let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                            
-                            // Since we can't get the tap location directly with TapGesture,
-                            // we'll use a point halfway between arcStartAngle and arcEndAngle
-                            // This is for compatibility - not ideal but will compile
+                            // Since TapGesture doesn't provide tap location,
+                            // use a point halfway between arcStartAngle and arcEndAngle
                             let midAngle = (startAngle + endAngle) / 2
                             
                             // Call the callback with the calculated angle

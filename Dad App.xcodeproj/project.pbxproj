@@ -29,9 +29,22 @@
 		5EFA148B2D79BD3A004F3FB4 /* Dad AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Dad AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		5E7A51592F0DC76700D40DA7 /* Exceptions for "Dad App" folder in "Dad App" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 5EFA14702D79BD38004F3FB4 /* Dad App */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		5EFA14732D79BD38004F3FB4 /* Dad App */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5E7A51592F0DC76700D40DA7 /* Exceptions for "Dad App" folder in "Dad App" target */,
+			);
 			path = "Dad App";
 			sourceTree = "<group>";
 		};

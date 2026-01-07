@@ -54,7 +54,7 @@ struct AddEventView: View {
                     AddSleepView(date: date, initialTime: initialTime)
                         .environmentObject(dataStore)
                 } else if eventType == .goal {
-                    AddGoalView(date: date, initialTime: initialTime)
+                    AddGoalView(date: date)
                         .environmentObject(dataStore)
                 } else {
                     AddTaskView(date: date, initialTime: initialTime)

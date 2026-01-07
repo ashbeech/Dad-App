@@ -363,7 +363,7 @@ class TaskTitleConverter {
             let stem = String(verb.dropLast(3))
             
             // Check if the stem is in our irregular verbs dictionary
-            for (baseVerb, forms) in irregularVerbs {
+            for (_, forms) in irregularVerbs {
                 if forms[.gerund] == verb {
                     return forms[.pastTense] ?? verb
                 }
