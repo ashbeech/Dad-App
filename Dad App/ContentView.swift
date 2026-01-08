@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var forceRefreshID = UUID()
     
     var body: some View {
+        GeometryReader { geometry in
         VStack(spacing: 0) {
             // Top section with date navigation only (baby name removed)
             VStack(spacing: 4) {
@@ -100,18 +101,22 @@ struct ContentView: View {
             }
             .padding(.bottom, 8)
         }
+        .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .ignoresSafeArea(.keyboard)
         .sheet(isPresented: $showingAddSheet) {
             if dataStore.isEditingAllowed(for: currentDate) {
                 AddEventView(date: currentDate, initialTime: initialEventTime)
                     .environmentObject(dataStore)
+                    .ignoresSafeArea(.keyboard)
             }
-            
         }
         .sheet(item: $selectedEvent) { event in
             // Check if editing is allowed before presenting edit sheet
             if dataStore.isEditingAllowed(for: currentDate) {
                 EditEventView(event: event, date: currentDate)
                     .environmentObject(dataStore)
+                    .ignoresSafeArea(.keyboard)
             }
         }
         .alert(isPresented: $showingLockAlert) {
@@ -124,6 +129,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingSettingsSheet) {
             BabySettingsView()
                 .environmentObject(dataStore)
+                .ignoresSafeArea(.keyboard)
         }
         .toolbar {
             // Leading item - Baby's name

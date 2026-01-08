@@ -7,10 +7,18 @@ struct DadTrackApp: App {
     // Change this to a mutable property wrapper
     @State private var observers: [NSObjectProtocol] = []
     
+    init() {
+        // Disable automatic keyboard avoidance for scroll views
+        UIScrollView.appearance().keyboardDismissMode = .none
+    }
+    
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(dataStore)
+            NavigationStack {
+                ContentView()
+            }
+            .ignoresSafeArea(.keyboard)
+            .environmentObject(dataStore)
                 .onAppear {
                     // Request notification permissions when app launches
                     NotificationManager.shared.requestAuthorization()

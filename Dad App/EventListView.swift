@@ -65,6 +65,8 @@ struct EventListView: View {
                 }
             }
             .listStyle(PlainListStyle())
+            .scrollContentBackground(.visible)
+            .scrollDismissesKeyboard(.immediately)
             .id(listRefreshID)
             .onAppear {
                 setupRefreshTimer()
